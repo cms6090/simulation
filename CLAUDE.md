@@ -22,7 +22,7 @@
 - `mean=nonlinear`: $m_0(x)=\sqrt{6/11}\{2\sin(\pi x_1)+x_2+x_1x_2\}$
 - 두 mean의 평균은 0, 신호 분산은 $4/3$이며 이번 프로젝트의 구현 기준 함수로 사용
 - `scale=homo`: $\sigma_0(x)=1$
-- `scale=hetero`: $\sigma_0(x)=0.4+1.2\sin^2(\pi x_1)$
+- `scale=hetero`: $\sigma_0(x)=(0.4+1.2\sin^2(\pi x_1))/\sqrt{1.18}$
 - Hetero의 $E[\sigma_0^2(X)]=1.18$, homo는 1 — 이를 몰래 재정규화하지 않으며 비교 해석에 기록
 - `error=gaussian`: $\varepsilon\sim N(0,1)$
 - `error=student_t`: $\varepsilon=T/\sqrt3$, $T\sim t_3$
