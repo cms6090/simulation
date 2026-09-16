@@ -23,7 +23,7 @@
 - 두 mean의 평균은 0, 신호 분산은 $4/3$이며 이번 프로젝트의 구현 기준 함수로 사용
 - `scale=homo`: $\sigma_0(x)=1$
 - `scale=hetero`: $\sigma_0(x)=(0.4+1.2\sin^2(\pi x_1))/\sqrt{1.18}$
-- Hetero의 $E[\sigma_0^2(X)]=1.18$, homo는 1 — 이를 몰래 재정규화하지 않으며 비교 해석에 기록
+- Homo·hetero 모두 $E[\sigma_0^2(X)]=1$ — hetero의 정규화 전 평균 제곱은 1.18이며, 위 식의 $\sqrt{1.18}$로 나눈 정규화를 유지하고 추가 재정규화하지 않음
 - `error=gaussian`: $\varepsilon\sim N(0,1)$
 - `error=student_t`: $\varepsilon=T/\sqrt3$, $T\sim t_3$
 - `error=lognormal`: $\varepsilon=(e^Z-e^{1/2})/\sqrt{e(e-1)}$, $Z\sim N(0,1)$
@@ -146,7 +146,7 @@ $C(x)=[L(x),U(x)]$이며 모든 구간이 같은 평가 입력에 대한 endpoin
 - Pilot에서 MC의 Oracle 대비 coverage·endpoint 오차, population 분위수 안정성, 평가 입력 평균의 안정성 확인
 - Pilot 수치 표본 수는 예를 들어 $10^4,10^5,10^6$ 후보에서 조정 가능하나, 충분하다는 결론은 실제 오차 측정으로 제시
 - 허용오차는 config에 명시; 관심 있는 통계적 차이보다 수치 오차가 작도록 정하고 미충족은 명시적 실패로 기록
-- Main 구현·검증 → 세 regime와 저장 → pilot → 재현 가능한 full 실행 경로 순서; heatmap·추가 sensitivity로 핵심 구현을 미루지 않음
+- 구간 생성 함수 구현·검증 → 구간 관련 pilot과 결과 확인 → 지표·분해·세 regime의 반복·저장 구현 → 평가 표본 수 검증 → 재현 가능한 full 실행 순서; heatmap·추가 sensitivity는 핵심 분석 이후 진행
 
 ## 9. RNG·병렬화·수치 처리
 
@@ -175,7 +175,7 @@ $C(x)=[L(x),U(x)]$이며 모든 구간이 같은 평가 입력에 대한 endpoin
 
 - 순수 수식·계산의 의미 있는 검증부터 구현하고, 검증만으로 전체 과학적 결과가 확정된다고 주장하지 않음
 - Error `cdf(ppf(p))≈p`, 표준화·support 확인; 특히 LogNormal support와 Student-t scale 검증
-- Mean 평균 0·분산 $4/3$, scale 최소 양수·평균 제곱 1.18의 분석값과 수치 계산 비교
+- Mean 평균 0·분산 $4/3$, scale 최소 양수·평균 제곱 1(homo·hetero 공통)의 분석값과 수치 계산 비교
 - 알려진 배열로 conformal 순위 901·951·991 및 $k=m+1$ 경계 확인
 - Oracle coverage가 각 목표와 일치, 대칭·등분산에서 Oracle=res_true 확인
 - 구조가 다른 임의 endpoint 예제로 모든 metric의 signed 분해 검증; 등식 성립만으로 중간 구간의 정확성이 증명되지는 않음
