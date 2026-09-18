@@ -88,6 +88,9 @@ mc_quantile_method: null
 ## 3. 입력과 데이터 계약
 
 - X_train.shape=(1000,2), y_train.shape=(1000,)
+- 현재 노트북의 training_x·training_y는 각각 X_train·y_train에 해당
+- Training 데이터는 point_id, x1, x2, y를 포함한 training_set 하나로 관리
+- 입력 전용 테이블을 별도로 생성하거나 중복 저장할 필요 없음
 - X_eval=X_train 값 복사 또는 read-only 공유, point_id를 통해 대응 보존
 - X_cal.shape=(1000,2), y_cal.shape=(1000,)
 - Calibration 입력은 별도 생성기를 사용하고 X_train을 그대로 복사하지 않음
@@ -233,14 +236,28 @@ mc_quantile_method: null
 - 생성·학습·예측·MC 분위수·평가 단계별 시간을 측정하여 실제 병목 보고
 - 실행시간은 실제 측정값과 실행 환경을 함께 보고
 
-## 10. 결과 파일 계약
+## 10. 데이터 저장과 결과 기록
 
-필수 파일의 제안 구조
+### 현재 단계 — Training dataset 저장
+
+- training_set의 point_id, x1, x2, y를 CSV 하나에 저장
+- 현재 저장 경로는 ../data/training_data1.csv이며 현재 작업 디렉터리 기준
+- 저장 폴더가 없으면 생성하고 to_csv(..., index=False) 사용
+- 같은 경로로 재실행하면 현재 데이터로 덮어쓰므로, 여러 DGP·학습 반복을 보관할 때는 서로 구분되는 경로 사용
+- 불러온 데이터의 x1·x2 열을 training_x, y 열을 training_y로 사용하며 point_id로 대응 유지
+- 같은 training_x를 MC·평가 위치로 사용하되, 저장된 training_y는 coverage 평가값으로 재사용하지 않음
+- smoke_config는 DGP·seed·입력 ID·설정 상태를 기록하며 현재 단계에서는 노트북에 유지 가능
+- 지금은 입력 전용 CSV나 별도 설정 JSON을 추가로 생성할 필요 없음
+
+### 후속 단계 — 결과 파일 구성 제안
+
+아래 파일명·분할 방식은 후속 구현을 위한 제안이며 현재 training 생성 단계에서 모두 만들 필요 없음
+필요한 결과와 설정의 대응을 보존하면 파일 통합 또는 다른 저장 형식 사용 가능
+
 
 | 파일 | 내용 |
 | --- | --- |
 | resolved_config.json | 설정값·상태·설계 버전·반복 정책 |
-| inputs.csv | input_set_id, role, point_id, x1, x2 |
 | model_diagnostics.csv | scenario, model, b, point_id, true_mean, true_scale, true_variance, fitted_mean, mean_error |
 | variance_diagnostics.csv | scenario, model, b, estimator, denominator, design_noise_variance, population_noise_variance, sigma2_hat, variance_gap_design |
 | interval_metrics.csv | scenario, model, b, r, cal_id, mc_id, eval_id, point_id, alpha, method, lower, upper, center, half_width, length, y_true, covered |
