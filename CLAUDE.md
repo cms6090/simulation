@@ -1,189 +1,274 @@
-# MC vs Split Conformal Prediction 시뮬레이션
+# MC vs Split CP — 구현 지침
 
-## 1. 작업 목적과 원칙
+## 1. 목적과 우선순위
 
-- 이 파일은 연구 시뮬레이션을 구현하는 프로젝트 지침이며, 기존 코드나 실행 결과가 존재한다는 뜻은 아님
-- 사용자의 목표: **MC–CP 차이를 coverage·중심·폭으로 평가 → 각 지표의 차이를 Structural·Fitting·Calibration으로 분해 → marginal·fixed-x·fixed-calibration에서 확인**
-- Coverage가 우선이며 중심·폭과 원인 분해도 필수 핵심 분석으로 구현
-- Heatmap은 결과 표현 단계로 후순위 배치하고, plotting 없이 수치 평가·분해·저장이 가능하도록 구성
-- 구현 전에 기존 저장소·설정·설계 문서를 확인하고 재사용 가능한 코드를 파악
-- 이 파일만으로 기본 구현 가능하도록 작성했으며, 존재하지 않는 외부 파일을 필수 의존성으로 가정하지 않음
-- 함께 제공된 `시뮬.md`가 있으면 설명 자료로 참고하고, 이 파일의 fixed-x 중심 불변·500회 기본값 설명을 적용
-- 이후 사용자가 명시한 수정사항은 반영하되, 연구 목적·DGP·score·평가 대상의 의미를 설명 없이 변경하지 않음
-- 별도 언어 지정이나 기존 구현이 없으면 Python, NumPy, SciPy, scikit-learn으로 시작하는 구현 기본안 사용
-- 설명·README는 한국어, 변수·함수명은 일관된 영어 사용, `fitted model` 용어 사용
-- 관측한 사실과 예상·미정 설정을 구분하고, 실행하지 않은 코드·검증·결과를 실행했다고 보고하지 않음
+- 이 파일은 MC·CP 예측구간 비교 시뮬레이션의 구현 지침
+- 같은 training data에서 학습한 **동일한 fitted model**을 MC와 CP가 공유
+- MC는 training residual로 추정한 정규 오차분포에서 가상 반응값을 생성하는 방법
+- CP는 별도 calibration absolute residual과 conformal 순위로 구간을 구성하는 방법
+- 주 결과는 true model의 새 반응값에 대한 실제 포함 비율과 구간 길이
+- **첫 단계는 Random Forest가 true 함수를 충분히 잘 근사하는지 확인하는 것**
+- 함수 근사 정확도를 먼저 보고한 뒤 잔차분산 추정과 MC·CP 비교 진행
+- 현재 모델은 Random Forest 하나이며, 후속 deep learning 등 추가 가능
+- 최신 사용자 지시 우선, 다음으로 이 문서와 동반 `시뮬.md` 적용
+- 두 문서 충돌은 조용히 추정하여 해결하지 말고 구체적으로 보고
+- 설명은 한국어, 코드 식별자는 영어, 모델 명칭은 fitted model 사용
+- 구현 언어·라이브러리 제안: Python·NumPy·SciPy·scikit-learn
 
-## 2. 연구 범위와 DGP
+## 2. 확정 설정과 미정 설정
 
-- 설명변수 `X.shape == (n, 2)`, 반응 `y.shape == (n,)`, 각 행은 독립 관측치
-- $X_1,X_2\overset{iid}{\sim}U(-1,1)$, 입력과 오차 독립, $Y=m_0(X)+\sigma_0(X)\varepsilon$
-- `mean=linear`: $m_0(x)=\sqrt2(x_1+x_2)$
-- `mean=nonlinear`: $m_0(x)=\sqrt{6/11}\{2\sin(\pi x_1)+x_2+x_1x_2\}$
-- 두 mean의 평균은 0, 신호 분산은 $4/3$이며 이번 프로젝트의 구현 기준 함수로 사용
-- `scale=homo`: $\sigma_0(x)=1$
-- `scale=hetero`: $\sigma_0(x)=(0.4+1.2\sin^2(\pi x_1))/\sqrt{1.18}$
-- Homo·hetero 모두 $E[\sigma_0^2(X)]=1$ — hetero의 정규화 전 평균 제곱은 1.18이며, 위 식의 $\sqrt{1.18}$로 나눈 정규화를 유지하고 추가 재정규화하지 않음
-- `error=gaussian`: $\varepsilon\sim N(0,1)$
-- `error=student_t`: $\varepsilon=T/\sqrt3$, $T\sim t_3$
-- `error=lognormal`: $\varepsilon=(e^Z-e^{1/2})/\sqrt{e(e-1)}$, $Z\sim N(0,1)$
-- 모든 오차는 평균 0·분산 1, error별 `sample`, `cdf`, `ppf`가 동일한 표준화를 사용하도록 구현
-- Student-t는 `cdf(e) = t.cdf(sqrt(3)*e, df=3)`, `ppf(p) = t.ppf(p,df=3)/sqrt(3)`
-- LogNormal은 $a=e^{1/2}$, $s=\sqrt{e(e-1)}$일 때 $F_\varepsilon(u)=0$ if $su+a\le0$, 아니면 $\Phi(\log(su+a))$; $q_p=(\exp(\Phi^{-1}(p))-a)/s$
-- OLS는 절편과 원변수 두 개만 사용, nonlinear·interaction feature를 추가하지 않음
-- RF는 squared-error conditional mean 회귀 forest 사용, 1,000 trees 유지
-- 2 mean × 2 scale × 3 error = 12개 DGP; OLS·RF 포함 24개 model–DGP 조합
-- 목표 coverage `[0.90, 0.95, 0.99]`, alpha `[0.10, 0.05, 0.01]`; 같은 fitted model·residual에서 동시 계산
-- 주 분석 `n_train=1000`, `n_cal=1000`, `B=200`; 차원 확장·CQR·normalized CP·Jackknife+는 현재 범위 밖
+확정값
 
-## 3. 표기와 설정 상태
+```yaml
+design_version: fitted_gaussian_mc_vs_split_cp_v1
+means: [linear, nonlinear]
+scales: [homo, hetero]
+errors: [gaussian, student_t, lognormal]
+models: [random_forest]
+d: 2
+n_train: 1000
+n_cal: 1000
+M_MC: 1000
+R_MC: 200  # 임시 구간 생성·평가 반복 수
+true_y_per_interval: 1
+alphas: [0.10, 0.05, 0.01]
+evaluation_inputs: training_inputs
+mc_refit: false
+mc_error_family: gaussian
+coverage_estimator: empirical_inclusion
+```
 
-- `model_id` / 수학의 $j$: OLS 또는 RF이며 평가 관점이 아님
-- `regime`: `marginal`, `fixed_x`, `fixed_calibration`; `b`: training ID, `r`: calibration ID, `i`: calibration 관측치
-- 출력의 `b,r`는 1부터 시작하는 논리 ID 사용; 배열 인덱스와 명확히 구분
-- Fixed-x는 각 DGP의 `b=1..10`에서 `R_cal=500`을 실행 기본값으로 사용; 수학적으로 필수인 횟수는 아님
-- RF의 leaf size·depth·feature sampling·bootstrap·세부 버전은 아직 미정: 기존 설정이 없으면 명시적인 pilot 기본안을 정해 기록하고, 같은 설정을 모든 DGP에 적용
-- `M_MC`, `M_pop`, `N_eval`, 수치 허용오차, master seed는 config로 관리; 아직 연구 결과로 검증된 확정값은 없음
-- 합리적인 pilot 설정으로 작은 실행을 진행하고, 선택 근거·안정성을 기록해 full config를 완성; 라이브러리 기본값을 숨기지 않음
-- 설정 제안은 제안으로 표시하고, 사용자 지정값이 있으면 이를 우선 적용
+- True DGP: Y=f(X)+sigma0(X)*epsilon, E(epsilon)=0, Var(epsilon)=1
+- X의 두 좌표는 독립 U(-1,1), training 입력은 생성 후 고정, calibration 입력은 별도 생성
+- linear: f(x)=sqrt(2)*(x1+x2)
+- nonlinear: f(x)=sqrt(6/11)*(2*sin(pi*x1)+x2+x1*x2)
+- homo: sigma0(x)=1
+- hetero: sigma0(x)=(0.4+1.2*sin(pi*x1)**2)/sqrt(1.18)
+- gaussian: epsilon~N(0,1)
+- student_t: epsilon=T/sqrt(3), T~t(df=3)
+- lognormal: epsilon=(exp(Z)-exp(0.5))/sqrt(e*(e-1)), Z~N(0,1)
+- 12개 DGP, Random Forest 기준 12개 model–DGP 조합, alpha별 36개 결과 조건
+- Training·calibration·true 평가 반응값은 해당 scenario의 동일 DGP로 생성
+- MC는 모든 scenario에서 fitted mean+N(0,sigma2_hat)를 사용
+- MC의 분산은 training residual에서 추정한 scalar이며 true sigma0(X)를 사용하지 않음
+- 비정규 DGP에서도 MC error family를 true error family로 자동 변경하지 않음
+- 조건별 결과에는 MC 정규·등분산 가정의 적합 여부에 따른 영향도 포함
+- sigma0는 표준편차 함수, sigma0(X)**2는 조건부 분산
+- Error sample·CDF·PPF는 같은 표준화 사용, lognormal support 처리 확인
+- CDF: Gaussian은 norm.cdf(u), Student-t는 t.cdf(sqrt(3)*u,df=3)
+- LogNormal CDF: a=exp(0.5), c=sqrt(e*(e-1)); c*u+a<=0이면 0, 아니면 norm.cdf(log(c*u+a))
+- Error 분산 1, E_X[sigma0(X)**2]=1, 두 mean의 모집단 분산 4/3
+- 유한 고정 입력의 평균 true 분산이 정확히 1이어야 한다고 assert하지 않음
+- 모델 인터페이스는 fit(X,y), predict(X), model_id, 학습 설정 기록을 공통으로 제공
+- Deep learning 추가 시 모델 adapter를 구현하고 MC·CP·평가 모듈은 재사용
+- Training·calibration은 1:1이며 전체 1,000개를 나누는 구조가 아님
+- Calibration은 별도 입력을 생성하고 true model로 반응값 생성
 
-## 4. 다섯 구간의 생성 계약
+미정값
 
-$C(x)=[L(x),U(x)]$이며 모든 구간이 같은 평가 입력에 대한 endpoint를 반환하도록 구현
+```yaml
+variance_estimator_by_model: null
+rf_hyperparameters: null
+fit_accuracy_criteria: null
+fit_pilot_tuning_policy: null
+B: null
+training_design_repeat_policy: null
+calibration_repeat_policy: null
+master_seed: null
+mc_quantile_method: null
+```
 
-| interval_id | 생성 과정과 정의 |
+- 사용자 확정값과 구현 제안값을 설정 메타데이터에서 구분
+- 미정값은 함수 인자·config로 노출하고 silent fallback 금지
+- 모듈 구현과 smoke 실행은 진행 가능하며 임시값은 별도 smoke config에 명시
+- Full 실행은 해당 실행에 필요한 필수 설정이 모두 정해져야 가능
+- 하나의 fitted model 실험도 입력별 R_MC=200 구간 생성·평가 수행
+- B는 추가 training 반복이며 R_MC와 구분, calibration 정책은 미정 상태로 유지
+
+## 3. 입력과 데이터 계약
+
+- X_train.shape=(1000,2), y_train.shape=(1000,)
+- X_eval=X_train 값 복사 또는 read-only 공유, point_id를 통해 대응 보존
+- X_cal.shape=(1000,2), y_cal.shape=(1000,)
+- Calibration 입력은 별도 생성기를 사용하고 X_train을 그대로 복사하지 않음
+- 이산 입력에서 우연히 같은 좌표가 나온다는 이유로 calibration 데이터를 강제로 제거하지 않음
+- Training true 오차, calibration true 오차, MC 오차, 평가 true 오차는 독립 stream
+- 동일 scenario·실험에서 모델 간 training·calibration·true 평가값 공유
+- MC·CP 각각 따로 fitting하지 않음
+- Training y·calibration y·MC y_star를 coverage 평가값으로 재사용하지 않음
+- Training 입력 위치 재방문 성능이며 새로운 X에 대한 일반화 성능과 구분
+
+## 4. 한 실험의 실행 순서
+
+1. 고정 입력 X_train을 로드하거나 명시된 설계로 구성
+2. True model에서 y_train 생성
+3. 별도 calibration 생성 규칙 준비, 고정 정책이면 한 세트 생성하고 재생성 정책이면 r 루프에서 생성
+4. 각 모델 j를 training data로 정확히 한 번 학습
+5. train_pred=model.predict(X_train)과 true_mean(X_train)을 비교하여 함수 RMSE·MAE·위치별 오차를 먼저 계산·저장하고 근사 상태 확인
+6. 함수 근사 확인 결과와 설정을 기록한 뒤 train_residual=y_train-train_pred로 sigma2_hat 추정
+7. 입력·모델·sigma2_hat을 고정하고 r=1..R_MC 반복, R_MC=200은 임시값
+8. 각 입력에서 MC 반응값 M_MC=1000개를 새로 생성하여 해당 반복 구간 구성
+9. 선택한 calibration 정책에 따라 CP 구간 구성 또는 재사용
+10. 각 입력에서 true DGP의 독립 반응값 하나를 새로 생성하여 두 구간에 공통 적용, 포함 여부 0·1 저장
+11. 입력별 200회 포함 여부 합/R_MC 계산, 반복별 길이와 평균·SD 및 함수 진단 저장
+
+모든 alpha에 같은 fitted model·MC 표본·calibration residual을 재사용
+
+### 함수 근사 확인 단계
+
+- 구간 생성 전에 DGP별 true mean·fitted mean·오차·함수 RMSE·MAE·절대오차 분위수를 먼저 출력
+- 관측 training y에 대한 residual RMSE를 true 함수 RMSE로 대체하지 않음
+- 함수 비교 산점도와 위치별 오차로 평균 지표가 가리는 부정확한 영역 확인
+- 적합이 부족한 조건은 모델 설정·적합 상태를 먼저 검토하고 미확인 상태를 성공으로 표시하지 않음
+- 충분한 정확도의 기준은 미정이므로 자의적인 threshold·통과 판정 금지
+- 설정 탐색은 별도의 fit pilot 단계로 제공하고, 본 실험에서 고정한 RF 설정을 사용
+- 잘 맞는 seed만 선택하거나 실패한 반복을 조용히 버리지 않음
+- True 함수를 튜닝에 사용하면 simulation-only tuning으로 기록
+- 추가 diagnostic 입력의 사용 여부와 평가 범위를 명시
+- fit_diagnostics 모듈을 MC·CP 없이 독립 실행 가능하게 구현
+- 함수 근사가 좋다는 이유로 분산 추정·정규분포 가정의 정확성까지 보장한다고 해석하지 않음
+
+## 5. 분산 추정 계약
+
+- sigma2_hat은 training residual에서 계산
+- 분산 추정에 사용하는 데이터는 training residual이며 true 분산으로 대체하지 않음
+- 모델별 추정 규칙·분모·보정·사용 표본 수를 결과에 기록
+- RF의 잔차분산 추정 규칙은 미정이며 모델에 근거 없는 자유도 보정을 도입하지 않음
+- RF의 SSE/n, OOB 등의 선택은 별도 결정이며 아직 확정되지 않음
+- OOB로 변경하는 경우 training in-sample residual 방식과 다르다는 점을 사용자에게 명시
+- 추정값이 음수·비유한이면 오류, 0이면 퇴화 구간 상태 기록 후 별도 처리
+- 작은 상수로 강제 치환하여 적합 문제를 숨기지 않음
+
+## 6. MC 구간 계약
+
+- 함수 입력: fitted_predictions, sigma2_hat, M_MC, alphas, rng, quantile_method
+- sigma_hat=sqrt(sigma2_hat)
+- 각 r에서 y_star[i,s]=fitted_predictions[i]+sigma_hat*z_r[i,s], z_r~N(0,1) 새로 생성
+- 입력별 구간 R_MC개 구성, 이전 endpoint 복사로 반복을 대체하지 않음
+- lower_mc[i,r,alpha], upper_mc[i,r,alpha]로 저장하거나 r별 chunk 처리
+- np.random.normal의 scale에 sigma2_hat을 넣지 않음
+- 분위수 축은 MC 표본 축, 입력 축으로 pooling 금지
+- 입력별 독립 MC 표본을 구현 기본안으로 사용하고 stream 정책 기록
+- 같은 MC 표본에서 모든 alpha의 lower·upper 계산
+- MC quantile method를 명시하고 CP 순위 계산과 분리
+- MC 내부 model.fit 호출 금지
+- 가상 표본에서 residual을 다시 계산해 sigma2_hat을 재추정하지 않음
+- 실제 endpoint midpoint는 finite MC 때문에 fitted prediction과 다를 수 있음
+- true model이나 true quantile로 MC 구간을 대체하지 않음
+
+수치 진단: fitted_prediction+sigma_hat*norm.ppf(p)와 MC endpoint 차이 기록
+
+이 기준은 fitted mean과 추정분산으로 정해지는 정규분포의 정확한 분위수
+
+## 7. CP 구간 계약
+
+- 같은 model 객체·같은 train_pred 사용
+- Calibration 세트별 cal_pred=model.predict(X_cal), score=abs(y_cal-cal_pred) 계산
+- k=ceil((n_cal+1)*(1-alpha)), k<=n_cal이면 sorted_score[k-1]
+- k>n_cal이면 q_hat=inf
+- n_cal=1000에서 alpha 0.10·0.05·0.01의 순위 901·951·991
+- 정수 경계 부동소수점 처리를 검증하고 CP에 보간 quantile을 사용하지 않음
+- cp_lower=train_pred-q_hat, cp_upper=train_pred+q_hat
+- 한 fitted model·calibration·alpha에서 CP 반폭은 모든 입력에 동일
+- calibration_repeat_policy는 fixed_dataset 또는 resample_each_r 중 명시적으로 선택, 미정이면 임의 확정 금지
+- fixed_dataset: 모든 r에 동일 CP endpoint 사용
+- resample_each_r: 각 r에서 입력·반응값 1000개를 새로 생성하고 q_hat 계산
+- cal_id를 r과 별도 저장, 입력만 고정하는 다른 정책은 별도 정의 필요
+- 새 fitted model을 사용하면 calibration 데이터를 고정해도 residual은 재계산
+- 고정 training 위치의 coverage를 distribution-free marginal 보장으로 주장하지 않음
+
+## 8. Coverage와 모델 진단
+
+- true_pred=true_mean(X_eval)
+- y_test[i,r]=true_pred[i]+sigma0(X_eval[i])*epsilon_test[i,r]
+- epsilon_test는 해당 scenario의 표준화 error family에서 생성
+- I_A[i,r]=(lower_A[i,r]<=y_test[i,r]) & (y_test[i,r]<=upper_A[i,r])
+- coverage_A[i]=sum(I_A[i,:])/R_MC, A는 mc 또는 cp
+- 매 r에서 true 반응값 하나를 생성하고 해당 r의 구간에만 대응
+- fixed_dataset CP도 평가를 위해 같은 endpoint를 r에 broadcast 가능
+- R_MC=200이면 위치·alpha·방법별 indicator 정확히 200개
+- 한 true y 재사용, 구간 하나 재사용으로 MC 반복 대체, 모든 구간×모든 true y 교차평가 금지
+- 반복 행에는 covered=0/1 저장, 요약 행에는 n_covered와 n_evaluated=R_MC 저장
+- 위치별 길이는 각 r의 값과 200회 평균·SD 저장
+- paired difference=mean(I_cp-I_mc), 같은 true 평가값 사용
+- 기본 요약=입력별 coverage의 동일 가중 평균
+- summary_scope='fixed_design_average', marginal로 자동 라벨링 금지
+- 함수 delta=train_pred-true_pred, RMSE=sqrt(mean(delta**2)), MAE=mean(abs(delta))
+- Training residual RMSE와 true 함수 RMSE는 다른 변수·다른 열
+- true_variance[i]=sigma0(X_eval[i])**2
+- design_noise_variance=mean(true_variance)
+- variance_gap_design=sigma2_hat-design_noise_variance
+- sigma2_hat은 scalar이며 이분산 함수 전체를 추정한다고 해석하지 않음
+- 모집단 평균 noise variance=1과 유한 설계 평균을 구분
+- center=(lower+upper)/2, half_width=(upper-lower)/2, length=upper-lower
+- Coverage와 length의 CP−MC 차이를 직접 보고
+- 무한 endpoint는 coverage와 길이를 적절히 처리하고 center 미정 상태 별도 기록
+
+선택적 검증: 해당 DGP의 표준화 error CDF로 F_error((upper-true_pred)/true_scale)-F_error((lower-true_pred)/true_scale) 계산
+
+- CDF 검증값을 주 결과 empirical coverage와 다른 열에 저장
+- CDF 진단은 각 r의 구간에서 계산한 뒤 평균, indicator 하나가 해당 확률과 같아야 한다고 assert하지 않음
+- 현재 200회는 fitted model·sigma2_hat 조건에서의 평가이며 training 변동까지 포함하지 않음
+- 비율 간격은 0.005, 200회로 99% coverage 정밀도가 충분하다고 단정하지 않음
+- 여러 입력·alpha·방법의 값을 전부 독립 반복처럼 합쳐 표준오차를 계산하지 않음
+
+## 9. 반복·RNG·계산량
+
+- RNG는 난수 생성기이며 seed로 같은 실험을 재현하기 위한 장치
+- master seed와 scenario/model/b/r/cal_id/point_id/stage의 안정적 ID로 substream 분리
+- Python hash()와 병렬 완료 순서로 seed 생성 금지
+- train_error, calibration_input, calibration_error, model, mc_error, eval_error stream 구분
+- 데이터 공유를 의도한 모델 간에는 같은 데이터 ID 사용
+- 전체 실험 반복의 fitting과 MC 내부 fitting을 구분
+- 반복 정책은 입력 고정 범위, calibration 입력 고정 여부, calibration 반응값 고정 여부를 각각 기록
+- 공유 calibration이 있는 반복들을 모두 독립 실험으로 간주하지 않음
+- $B$개의 독립 실험이 실제 확보된 경우에만 반복별 요약의 SD/sqrt(B)를 해당 평균의 SE로 사용
+- M_MC=1000은 구간당 가상 표본 수, R_MC=200은 구간·true y 쌍의 반복 수
+- DGP·모델 하나당 1000*200*1000=2억 개 MC 값, 1000*200=20만 개 true 평가값
+- RF·12개 DGP에서 MC 값 총 24억 개, 모든 alpha는 같은 표본 재사용
+- 전체 배열을 한꺼번에 저장하지 않고 r·입력 chunk 단위 처리
+- 입력별 prediction 캐시, chunking, 모든 alpha에서 표본 재사용
+- 전체 y_star·y_test를 저장하지 않아도 count·endpoint·seed로 결과 재현 가능
+- CPU 벡터화 우선, 바깥 병렬화와 RF 내부 병렬화 중첩 방지
+- 생성·학습·예측·MC 분위수·평가 단계별 시간을 측정하여 실제 병목 보고
+- 실행시간은 실제 측정값과 실행 환경을 함께 보고
+
+## 10. 결과 파일 계약
+
+필수 파일의 제안 구조
+
+| 파일 | 내용 |
 | --- | --- |
-| `oracle` | True error 분위수 계산 → $[m_0(x)+\sigma_0(x)q_{\alpha/2},\ m_0(x)+\sigma_0(x)q_{1-\alpha/2}]$ |
-| `mc` | True DGP로 $Y\mid X=x$ 표본 생성 → 양쪽 empirical quantile 사용 → Oracle의 MC 근사 |
-| `res_true` | True mean residual $R_0=\lvert Y-m_0(X)\rvert$ → 전체 $X$에 대한 $q_{0,\alpha}=q_{1-\alpha}(R_0)$ → $[m_0(x)-q_{0,\alpha},m_0(x)+q_{0,\alpha}]$ |
-| `pop` | Training으로 $\widehat m_j$ 학습·고정 → 독립 새 관측치의 $R_j=\lvert Y-\widehat m_j(X)\rvert$ 분포 → $q_{pop,j,\alpha}=q_{1-\alpha}(R_j\mid\widehat m_j)$ → $[\widehat m_j(x)-q_{pop,j,\alpha},\widehat m_j(x)+q_{pop,j,\alpha}]$ |
-| `cp` | 같은 fitted model → 실제 독립 calibration $m$개의 absolute residual → 아래 conformal 순위 → $[\widehat m_j(x)-\widehat q_{j,\alpha},\widehat m_j(x)+\widehat q_{j,\alpha}]$ |
+| resolved_config.json | 설정값·상태·설계 버전·반복 정책 |
+| inputs.csv | input_set_id, role, point_id, x1, x2 |
+| model_diagnostics.csv | scenario, model, b, point_id, true_mean, true_scale, true_variance, fitted_mean, mean_error |
+| variance_diagnostics.csv | scenario, model, b, estimator, denominator, design_noise_variance, population_noise_variance, sigma2_hat, variance_gap_design |
+| interval_metrics.csv | scenario, model, b, r, cal_id, mc_id, eval_id, point_id, alpha, method, lower, upper, center, half_width, length, y_true, covered |
+| point_summary.csv | scenario, model, b, point_id, alpha, method, n_covered, n_evaluated, coverage, length_mean, length_sd |
+| method_comparison.csv | 동일 비교 key, coverage_cp_minus_mc, length_cp_minus_mc |
+| fixed_design_summary.csv | 입력 평균 coverage·length, 함수 RMSE·MAE, 평균 대상 |
+| numerical_checks.csv | MC endpoint 검증, 선택적 CDF 검증 |
+| run_manifest.json | seed·버전·실행 범위·시간·상태 |
 
-- `res_true`, `pop`, `cp`는 **absolute residual** 사용; signed residual의 양쪽 분위수로 바꾸지 않음
-- `pop`은 training residual 또는 실제 calibration residual을 재사용하여 만드는 구간이 아님
-- `cp`: $k=\lceil(m+1)(1-\alpha)\rceil$, $k\le m$이면 정렬 residual의 `k-1` 원소, $k=m+1$이면 $+\infty$
-- 기본 `m=1000`에서 순위는 901·951·991; quantile 기본 보간이나 경험적 90·95·99% 분위수로 대체하지 않음
-- 부동소수점 때문에 정수여야 할 순위가 한 단계 바뀌지 않도록 순위 계산을 검증
-- MC empirical quantile의 보간 규칙은 명시적으로 고정하고 기록; CP의 순위 규칙과 분리
-- Location-scale 구조에서는 동일 error sample의 empirical quantile을 $m_0(x)+\sigma_0(x)\widehat q_p$로 변환해 MC를 모든 위치에서 계산 가능
-- MC는 fitted model을 사용하지 않음; error별 benchmark 표본을 pilot에서 검증 후 고정해 모델·반복 간 공유하고 그 의존성을 기록
-- True quantile을 MC endpoint에 직접 넣지 않으며, true quantile은 Oracle·검증에만 사용
-- Oracle·MC·res_true는 모델별로 중복 생성할 필요 없음; pop은 training·model별, cp는 training·calibration·model별로 계산
+- r은 1..R_MC의 구간·평가 반복 ID, b는 학습 실험 ID, cal_id는 calibration ID
+- 200개 indicator를 서로 다른 fitted model의 독립 반복으로 해석하지 않음
+- 모델별 고정 입력 요약과 반복 간 요약을 별도로 저장
+- 실행 결과에 run_id를 부여하고 데이터·설정·코드 버전이 일치할 때만 중단된 실행 재개
+- Plot은 저장 결과를 읽는 별도 모듈, 미정 heatmap grid 자동 추가 금지
 
-## 5. Population quantile 계산
+## 11. 의미 있는 검증과 완료 보고
 
-- Calibration 무한대는 정의이며, 실제 구현은 수치 근사
-- 고정 중심 함수 $g$에 대해 $p_g(q,x)=F_\varepsilon((g(x)+q-m_0(x))/\sigma_0(x))-F_\varepsilon((g(x)-q-m_0(x))/\sigma_0(x))$
-- $H_g(q)=E_X[p_g(q,X)]$; $g=m_0$이면 res_true, $g=\widehat m_j$이면 pop; $H_g(q)=1-\alpha$의 해를 구함
-- 독립 reference 입력을 생성 → true·fitted prediction과 scale 캐시 → 동일 입력에서 CDF 평균 → bracket을 확보한 root-finding으로 해 탐색
-- Root-finding 중 reference 입력을 다시 뽑지 않음; root 잔차뿐 아니라 별도 reference 입력과 표본 확대에서 quantile 정확도 확인
-- Reference 입력은 training·calibration·최종 평가 입력과 독립; 모델 간에는 공유하되 training 반복별 독립 reference를 기본으로 사용
-- Reference $Y$ 생성은 불필요; error를 CDF로 평균해 근사 변동을 줄임
-- Population 근사에 conformal 순위 보정을 적용하지 않음
-- True residual의 입력 의존성은 $X_1$뿐이므로 $q_{0,\alpha}$는 1차원 적분 가능; scale·error·alpha별 캐시 재사용 가능
-- Reference 근사값과 exact 정의를 메타데이터에서 구분; 수치 실패를 성공값·0으로 바꾸지 않음
+1. 함수 근사 진단이 구간 비교보다 먼저 실행되고, MC·CP가 동일 fitted model 예측을 사용하며 MC 내부 학습이 없는지 확인
+2. 알려진 residual 배열에서 CP 순위와 무한 구간 경계 확인
+3. 주어진 fitted mean·분산에서 MC 분위수가 추정 정규분포 분위수와 수치적으로 일치하는지 확인
+4. 입력·R_MC·M_MC 축 구분, r마다 새 MC 표본과 true y 하나 생성, 200개 indicator 합/200 확인
+5. 작은 예제의 포함 count와 직접 계산 결과 비교
+6. 함수 RMSE가 관측 y가 아닌 true mean을 기준으로 계산되는지 확인
+7. CDF 진단을 사용하는 경우 empirical coverage와 표본오차 수준에서 비교
+8. Seed 재현성과 chunk 처리 후 결과 집계 확인
+9. 12개 DGP의 sample·CDF·PPF 표준화와 hetero의 sqrt(1.18) 정규화 확인
+10. 비정규·이분산 조건에서 true 평가 생성과 Gaussian MC 생성이 올바르게 분리되는지 확인
 
-## 6. 평가지표와 필수 3단계 분해
-
-- 고정된 구간의 `conditional_coverage`: $F_\varepsilon((U-m_0)/\sigma_0)-F_\varepsilon((L-m_0)/\sigma_0)$; 현재 연속 오차에 대한 식
-- `center=(L+U)/2`, `half_width=(U-L)/2`, `length=U-L=2*half_width`
-- `target_coverage=1-alpha`; coverage와 목표의 차이, CP와 MC의 차이는 별도 열로 저장
-- `nominal`은 목표 수준; marginal·conditional은 실제 포함 확률의 평균·조건부 대상 구분
-- 각 scalar metric $T$에 대해 다음을 같은 위치·반복·alpha에서 계산
-
-| component | 정의 |
-| --- | --- |
-| `total_mc` | $T(C_{CP,j})-T(C_{MC})$ |
-| `structural` | $T(C_{res,0})-T(C_{Oracle})$ |
-| `fitting` | $T(C_{pop,j})-T(C_{res,0})$ |
-| `calibration` | $T(C_{CP,j})-T(C_{pop,j})$ |
-| `mc_approximation` | $T(C_{Oracle})-T(C_{MC})$ |
-
-- `total_mc = structural + fitting + calibration + mc_approximation`; 오차 분해는 coverage·center·half_width·length 모두 필수
-- Coverage는 각 구간의 CDF로 직접 계산; endpoint나 길이 차이를 coverage 차이로 선형 변환하지 않음
-- $a_\alpha=(q_{\alpha/2}+q_{1-\alpha/2})/2$, $h_\alpha=(q_{1-\alpha/2}-q_{\alpha/2})/2$; Oracle 중심 $m_0+\sigma_0a_\alpha$, 반폭 $\sigma_0h_\alpha$
-- 중심 분해는 `(-sigma*a, fitted_mean-true_mean, 0)`; 반폭 분해는 `(q0-sigma*h, qpop-q0, qhat-qpop)`; 길이 분해는 반폭의 2배
-- 분해는 **signed difference**이며 절댓값·제곱의 합으로 바꾸지 않음; 항끼리 상쇄 가능, 독립적 인과 기여율이 아님
-- Fitting에는 유한 training 오차와 misspecification이 함께 포함; calibration에는 표본 변동과 conformal 순위 보정이 함께 포함
-- 평균은 같은 가중치로 계산하면 분해식 유지; 분산의 합에는 공분산이 필요하므로 단순 가산하지 않음
-- 작거나 음수인 수치 결과를 이론에 맞추려고 강제로 보정하지 않음
-
-## 7. 세 평가 관점과 반복 절차
-
-세 관점은 동일한 구간 생성법의 평가 방식이며, **모든 calibration 입력은 원래 전체 DGP에서 생성**
-
-1. 각 DGP와 `b=1..200`에서 training 1000개 생성 → OLS·RF 학습 → 독립 calibration 1000개(`r=1`) 생성
-2. 같은 training·calibration을 모델 간 공유하고, 세 alpha에서 다섯 구간과 지표·분해 계산
-3. 독립 평가 입력에서 marginal 요약, 고정된 평가 위치에서 위치별 결과를 같은 fitted model·calibration로 계산
-4. `b=1..10`에서는 기존 `r=1` 재사용 후 `r=2..500`만 추가 → fitted model·population reference·MC benchmark 고정 → fixed-x 평가
-5. Primary aggregation에는 각 b의 `r=1`을 한 번씩 사용; 첫 10개 b의 추가 calibration 때문에 가중치가 커지지 않게 분리
-
-| regime | 고정 | 평가·요약 |
-| --- | --- | --- |
-| `marginal` | DGP·설정 | 각 b에서 독립 $N_{eval}$개 입력의 CDF coverage·구간 지표·분해를 평균 → B개 평균과 MCSE |
-| `fixed_x` | Fitted model과 $x_0$ | 각 b별 calibration 500회의 지표·분해 평균·SD·분위수 |
-| `fixed_calibration` | Fitted model·calibration | 각 x의 지표·분해 저장; 개별 고정 결과와 반복 평균 결과 구분 |
-
-- Fixed-x의 대표 위치 기본안: 각 좌표 `[-0.9,-0.5,0,0.5,0.9]`의 25개 조합; 평가 위치만 고정, calibration의 모든 $X_i$를 $x_0$로 두지 않음
-- Fixed-x에서 calibration 변화에 따라 coverage·폭은 변동 가능하지만 **CP 중심·전체 중심 차이는 고정**, 중심 calibration 항은 항상 0
-- 각 b의 500회 결과를 별도 보고; 10×500회를 독립 training 5000회처럼 취급하지 않음; 10·500은 선택한 기본값
-- Training·calibration 평균의 위치별 결과는 기본 B개의 `r=1`에서 별도로 계산하고 `conditioning=training_calibration_averaged`로 표시
-- `conditioning=fitted_model_and_calibration_fixed`, `calibration_averaged_given_fitted_model` 등 평균 대상을 명시
-- 고정 구간 CDF coverage에는 새 Y의 무작위성이 이미 적분됨; 기본 평가를 이진 포함 횟수 추정으로 대체하지 않음
-- 같은 평가 입력·가중치를 모든 구간·지표·분해에 사용; 평가 입력은 b별 독립, 모델 간 공유
-- MCSE는 b별 요약값의 표본 SD / sqrt(B); 방법 차이도 paired difference의 MCSE 계산
-- MCSE와 반복 SD를 구분; 고정 MC benchmark·공통 수치 기준의 오차는 MCSE에 포함되지 않으므로 별도 검증·보고
-- 정확한 population 기준에서 marginal coverage의 structural·fitting 평균은 0; 이는 local 차이가 없다는 뜻이 아니며 길이에는 적용되지 않음
-- 현재 연속 score에서 CP의 calibration·test 평균 coverage는 $k/(m+1)$; 개별 b·r·x가 목표와 같아야 한다고 assert하지 않음
-
-## 8. 구현 구조·설정·실행
-
-- 기존 구조가 없을 때의 제안: `src/`에 `dgp`, `models`, `intervals`, `population`, `metrics`, `decomposition`, `runners`, `storage`; 별도 `configs/`, `tests/`, `results/`
-- 핵심 수학 함수를 RNG·파일 I/O·plotting에서 분리; endpoint shape와 axis 순서를 함수 문서에 명시, float64 기본
-- Config에 모든 실험 상수와 model/numerical/seed 설정 저장; 실행 시 최종 resolved config를 기록
-- `smoke`, `pilot`, `full` 프로필과 실행 방법을 구현·README에 기록; 여기서 명령이 이미 존재한다고 가정하지 않음
-- Smoke는 일부 DGP·작은 반복의 작동 확인용으로 main 결과와 구분; full 설정의 200회·1000 trees를 조용히 줄이지 않음
-- Pilot에서 MC의 Oracle 대비 coverage·endpoint 오차, population 분위수 안정성, 평가 입력 평균의 안정성 확인
-- Pilot 수치 표본 수는 예를 들어 $10^4,10^5,10^6$ 후보에서 조정 가능하나, 충분하다는 결론은 실제 오차 측정으로 제시
-- 허용오차는 config에 명시; 관심 있는 통계적 차이보다 수치 오차가 작도록 정하고 미충족은 명시적 실패로 기록
-- 구간 생성 함수 구현·검증 → 구간 관련 pilot과 결과 확인 → 지표·분해·세 regime의 반복·저장 구현 → 평가 표본 수 검증 → 재현 가능한 full 실행 순서; heatmap·추가 sensitivity는 핵심 분석 이후 진행
-
-## 9. RNG·병렬화·수치 처리
-
-- 명시적인 master seed와 안정적인 ID 기반 RNG 분리: scenario, b, r, train, calibration, model, reference, evaluation, MC 단계별 독립 stream
-- Python의 매 실행 달라지는 `hash()`나 worker 완료 순서로 seed를 만들지 않음; `SeedSequence` 등에 고정 ID 매핑 사용
-- Fixed-x r 반복에서 모델과 reference를 재학습·재생성하지 않음; parallel worker마다 같은 RNG state가 복제되지 않도록 구성
-- CPU 기반 벡터화와 chunking 우선; 바깥 b 병렬화와 RF·BLAS 내부 병렬화의 중첩으로 oversubscription을 만들지 않음
-- 병렬화 수준·worker 수를 config와 manifest에 기록; GPU 전환을 기본 범위에 넣지 않음
-- 예측은 동일 입력에서 캐시하고 모든 alpha에서 재사용; calibration residual 정렬도 한 번만 수행
-- CDF 차이의 꼬리 소거오차를 점검하고 필요 시 survival function 사용; 범위를 크게 벗어나는 coverage를 clip하여 오류를 숨기지 않음
-- $k=m+1$의 무한 구간은 별도 처리: coverage 1·길이 무한, endpoint 평균의 중심은 정의되지 않을 수 있어 상태 명시; NaN을 유한한 값으로 변조하지 않음
-
-## 10. 결과 저장과 재현성
-
-- 기본 지표 long table: `run_id, scenario_id, model_id, b, r, regime, conditioning, point_id, x1, x2, alpha, interval_id, lower, upper, coverage, center, half_width, length`
-- 분해 long table: 동일 key + `metric, component, value`; marginal 행은 위치 null·명시적 집계 표시, 위치별 값과 혼합 금지
-- Shared benchmark를 모델별로 복제 저장할 경우 benchmark ID를 유지하여 독립 실험처럼 중복 집계하지 않음
-- b별 marginal 요약, fixed-x의 b별 r 요약, fixed-calibration 개별 값과 반복 요약을 분리
-- 모든 evaluated point의 기본값·분해 보존; 임의 평가 입력 전체 출력은 선택적으로 저장하고 최소한 seed·표본 수·b별 요약을 보존
-- Parquet 또는 동등한 타입 보존 형식 기본, CSV 요약 선택; seed manifest·resolved config·패키지 버전·코드 버전·수치 진단·실패 로그 보존
-- Run ID와 checkpoint를 사용해 중단 후 재개 가능하게 구현; 설정·코드 버전 불일치 시 기존 결과에 이어 쓰지 않음
-- 기존 결과를 덮어쓰지 않음; stage별 완료 여부와 `b,r`를 명시하고 실패 반복을 조용히 제외하지 않음
-- Heatmap은 저장 결과를 읽는 별도 함수; 표현 기본안은 각 축 21점의 grid이며 그 단순 평균을 marginal 적분으로 사용하지 않음
-
-## 11. 검증과 완료 기준
-
-- 순수 수식·계산의 의미 있는 검증부터 구현하고, 검증만으로 전체 과학적 결과가 확정된다고 주장하지 않음
-- Error `cdf(ppf(p))≈p`, 표준화·support 확인; 특히 LogNormal support와 Student-t scale 검증
-- Mean 평균 0·분산 $4/3$, scale 최소 양수·평균 제곱 1(homo·hetero 공통)의 분석값과 수치 계산 비교
-- 알려진 배열로 conformal 순위 901·951·991 및 $k=m+1$ 경계 확인
-- Oracle coverage가 각 목표와 일치, 대칭·등분산에서 Oracle=res_true 확인
-- 구조가 다른 임의 endpoint 예제로 모든 metric의 signed 분해 검증; 등식 성립만으로 중간 구간의 정확성이 증명되지는 않음
-- CP 반폭의 x 불변·fixed-x 중심의 r 불변·calibration 중심 항 0 확인; half_width와 length의 계수 2 검증
-- Gaussian·Student-t의 정확한 population fitting 반폭 차이는 비음수, LogNormal에 같은 부호를 강제하지 않음
-- Population root는 독립 reference로 확인; 작은 smoke의 noisier 근사에 엄격한 population 성질을 무조건 강제하지 않음
-- 작은 전체 흐름에서 5개 interval family·4개 metric·전체 차이 및 4개 component·3개 regime의 결과와 집계 key 확인
-- 작은 실행에서 동일 seed 재현성과 serial/parallel 및 재개 시 결과 일치 확인; 허용오차·범위 기록
-- 완료 보고에는 실제 구현 파일, 실행 명령, 수행한 검증, 실행 결과 범위, 미정·실패 설정을 명시; full 미실행이면 그대로 표시
-
-참고: 프로젝트 규칙 파일은 저장소 루트의 `CLAUDE.md` 사용 — [Claude Code 공식 문서](https://code.claude.com/docs/en/memory)
+- 작은 smoke 성공을 연구 full 결과 또는 99% MC 정밀도 검증 완료라고 보고하지 않음
+- 완료 보고에 구현 파일, 실행 명령, 실제 수행한 검증, 미정 설정, 미실행 범위 명시
+- 현재 문서는 구현 지침이며 코드 실행·성능 검증 완료를 뜻하지 않음
