@@ -36,6 +36,8 @@ evaluation_inputs: training_inputs
 mc_refit: false
 mc_error_family: gaussian
 coverage_estimator: empirical_inclusion
+calibration_repeat_policy: fixed_dataset
+viz_grid: {x1: [-0.8, -0.4, 0.0, 0.4, 0.8], x2: [-0.8, -0.4, 0.0, 0.4, 0.8]}
 ```
 
 - True DGP: Y=f(X)+sigma0(X)*epsilon, E(epsilon)=0, Var(epsilon)=1
@@ -73,7 +75,6 @@ fit_accuracy_criteria: null
 fit_pilot_tuning_policy: null
 B: null
 training_design_repeat_policy: null
-calibration_repeat_policy: null
 master_seed: null
 mc_quantile_method: null
 ```
@@ -83,7 +84,7 @@ mc_quantile_method: null
 - 모듈 구현과 smoke 실행은 진행 가능하며 임시값은 별도 smoke config에 명시
 - Full 실행은 해당 실행에 필요한 필수 설정이 모두 정해져야 가능
 - 하나의 fitted model 실험도 입력별 R_MC=200 구간 생성·평가 수행
-- B는 추가 training 반복이며 R_MC와 구분, calibration 정책은 미정 상태로 유지
+- B는 추가 training 반복이며 R_MC와 구분. calibration_repeat_policy는 fixed_dataset으로 확정(7절), B와는 별개 사안
 
 ## 3. 입력과 데이터 계약
 
@@ -105,13 +106,13 @@ mc_quantile_method: null
 
 1. 고정 입력 X_train을 로드하거나 명시된 설계로 구성
 2. True model에서 y_train 생성
-3. 별도 calibration 생성 규칙 준비, 고정 정책이면 한 세트 생성하고 재생성 정책이면 r 루프에서 생성
+3. 별도 calibration 생성 규칙 준비, calibration_repeat_policy=fixed_dataset이므로 실험 전체에서 한 세트만 생성
 4. 각 모델 j를 training data로 정확히 한 번 학습
 5. train_pred=model.predict(X_train)과 true_mean(X_train)을 비교하여 함수 RMSE·MAE·위치별 오차를 먼저 계산·저장하고 근사 상태 확인
 6. 함수 근사 확인 결과와 설정을 기록한 뒤 train_residual=y_train-train_pred로 sigma2_hat 추정
 7. 입력·모델·sigma2_hat을 고정하고 r=1..R_MC 반복, R_MC=200은 임시값
 8. 각 입력에서 MC 반응값 M_MC=1000개를 새로 생성하여 해당 반복 구간 구성
-9. 선택한 calibration 정책에 따라 CP 구간 구성 또는 재사용
+9. calibration_repeat_policy=fixed_dataset에 따라 1번에서 이미 확정된 CP 구간을 재사용 (재계산 없음)
 10. 각 입력에서 true DGP의 독립 반응값 하나를 새로 생성하여 두 구간에 공통 적용, 포함 여부 0·1 저장
 11. 입력별 200회 포함 여부 합/R_MC 계산, 반복별 길이와 평균·SD 및 함수 진단 저장
 
@@ -173,10 +174,10 @@ mc_quantile_method: null
 - 정수 경계 부동소수점 처리를 검증하고 CP에 보간 quantile을 사용하지 않음
 - cp_lower=train_pred-q_hat, cp_upper=train_pred+q_hat
 - 한 fitted model·calibration·alpha에서 CP 반폭은 모든 입력에 동일
-- calibration_repeat_policy는 fixed_dataset 또는 resample_each_r 중 명시적으로 선택, 미정이면 임의 확정 금지
-- fixed_dataset: 모든 r에 동일 CP endpoint 사용
-- resample_each_r: 각 r에서 입력·반응값 1000개를 새로 생성하고 q_hat 계산
-- cal_id를 r과 별도 저장, 입력만 고정하는 다른 정책은 별도 정의 필요
+- calibration_repeat_policy=fixed_dataset 확정: 모든 r에 동일 CP endpoint 사용
+- 확정 근거: MC·CP가 동일 fitted model을 공유하므로 "모델에 따른 차이"를 반복 요인으로 넣지 않는다는 전제와 일관되는 정책. calibration을 r마다 재생성하면 CP 쪽에만 별도의 변동 요인이 추가되어 두 방법의 "고정 대상"이 달라짐
+- resample_each_r(각 r에서 입력·반응값 1000개를 새로 생성하고 q_hat 계산)은 채택하지 않음. 재검토가 필요하면 구체적 근거와 함께 별도로 결정
+- cal_id는 r과 별도로 저장하되 fixed_dataset에서는 실험 전체에서 단일 값으로 고정
 - 새 fitted model을 사용하면 calibration 데이터를 고정해도 residual은 재계산
 - 고정 training 위치의 coverage를 distribution-free marginal 보장으로 주장하지 않음
 
@@ -215,6 +216,18 @@ mc_quantile_method: null
 - 비율 간격은 0.005, 200회로 99% coverage 정밀도가 충분하다고 단정하지 않음
 - 여러 입력·alpha·방법의 값을 전부 독립 반복처럼 합쳐 표준오차를 계산하지 않음
 
+### 8.1 5×5 grid 보조 시각화
+
+- 주 평가는 1000개 training 위치 그대로 유지, grid는 이를 대체하지 않고 보조 시각화로만 사용
+- viz_grid 좌표: x1, x2 각각 [-0.8, -0.4, 0.0, 0.4, 0.8] (확정값 yaml 참고), 조합 25개
+- grid point는 1000개 결과를 근방 평균(binning)하지 않음. 각 grid point에서 4절 7~10단계(MC 반복·true y 생성·포함여부)를 독립적으로 새로 수행
+- grid point에서도 fitted model·sigma2_hat·CP q_hat은 재추정하지 않고 이미 확정된 값을 predict에만 사용
+- grid 전용 R_MC는 주 실험과 동일하게 200 사용, M_MC도 1000으로 동일
+- 계산량은 25*200*1000=500만 개/DGP 수준으로 주 실험(1000개 위치, 2억 개/DGP) 대비 약 1/40이며 별도 예산으로 관리
+- 출력은 DGP*alpha*method(MC/CP) 조합별 5x5 coverage heatmap, 필요 시 CP-MC 차이 heatmap과 함수오차(delta) heatmap도 동일 grid로 생성
+- grid 결과는 point_summary.csv와 별도 테이블(예: grid_summary.csv)에 저장하고 주 결과 테이블과 혼합하지 않음
+- grid 실행은 주 실험(1000개) 완료 후 독립 모듈로 수행 가능하게 구현, 주 실험 결과를 변경하거나 대체하지 않음
+
 ## 9. 반복·RNG·계산량
 
 - RNG는 난수 생성기이며 seed로 같은 실험을 재현하기 위한 장치
@@ -223,7 +236,7 @@ mc_quantile_method: null
 - train_error, calibration_input, calibration_error, model, mc_error, eval_error stream 구분
 - 데이터 공유를 의도한 모델 간에는 같은 데이터 ID 사용
 - 전체 실험 반복의 fitting과 MC 내부 fitting을 구분
-- 반복 정책은 입력 고정 범위, calibration 입력 고정 여부, calibration 반응값 고정 여부를 각각 기록
+- 반복 정책은 입력 고정 범위, calibration 입력 고정 여부, calibration 반응값 고정 여부를 각각 기록. calibration은 calibration_repeat_policy=fixed_dataset에 따라 입력·반응값 모두 실험 전체에서 고정
 - 공유 calibration이 있는 반복들을 모두 독립 실험으로 간주하지 않음
 - $B$개의 독립 실험이 실제 확보된 경우에만 반복별 요약의 SD/sqrt(B)를 해당 평균의 SE로 사용
 - M_MC=1000은 구간당 가상 표본 수, R_MC=200은 구간·true y 쌍의 반복 수
@@ -264,6 +277,7 @@ mc_quantile_method: null
 | point_summary.csv | scenario, model, b, point_id, alpha, method, n_covered, n_evaluated, coverage, length_mean, length_sd |
 | method_comparison.csv | 동일 비교 key, coverage_cp_minus_mc, length_cp_minus_mc |
 | fixed_design_summary.csv | 입력 평균 coverage·length, 함수 RMSE·MAE, 평균 대상 |
+| grid_summary.csv | scenario, model, alpha, method, grid_x1, grid_x2, coverage, length_mean, delta (8.1절, 보조 시각화용) |
 | numerical_checks.csv | MC endpoint 검증, 선택적 CDF 검증 |
 | run_manifest.json | seed·버전·실행 범위·시간·상태 |
 
@@ -271,7 +285,7 @@ mc_quantile_method: null
 - 200개 indicator를 서로 다른 fitted model의 독립 반복으로 해석하지 않음
 - 모델별 고정 입력 요약과 반복 간 요약을 별도로 저장
 - 실행 결과에 run_id를 부여하고 데이터·설정·코드 버전이 일치할 때만 중단된 실행 재개
-- Plot은 저장 결과를 읽는 별도 모듈, 미정 heatmap grid 자동 추가 금지
+- Plot은 저장 결과를 읽는 별도 모듈. 5×5 grid heatmap(8.1절)은 확정된 viz_grid 좌표만 사용하고, 그 외 임의의 heatmap grid를 자동 추가하지 않음
 
 ## 11. 의미 있는 검증과 완료 보고
 
@@ -285,6 +299,7 @@ mc_quantile_method: null
 8. Seed 재현성과 chunk 처리 후 결과 집계 확인
 9. 12개 DGP의 sample·CDF·PPF 표준화와 hetero의 sqrt(1.18) 정규화 확인
 10. 비정규·이분산 조건에서 true 평가 생성과 Gaussian MC 생성이 올바르게 분리되는지 확인
+11. 5×5 grid는 1000개 결과의 binning이 아니라 grid point별 독립 MC·CP 계산 결과인지, fitted model·sigma2_hat·q_hat은 grid에서 재추정되지 않았는지 확인
 
 - 작은 smoke 성공을 연구 full 결과 또는 99% MC 정밀도 검증 완료라고 보고하지 않음
 - 완료 보고에 구현 파일, 실행 명령, 실제 수행한 검증, 미정 설정, 미실행 범위 명시
