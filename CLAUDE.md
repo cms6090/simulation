@@ -254,7 +254,7 @@ mc_quantile_method: null
 ### 현재 단계 — Training dataset 저장
 
 - training_set의 point_id, x1, x2, y를 CSV 하나에 저장
-- 현재 저장 경로는 ../data/training_data1.csv이며 현재 작업 디렉터리 기준
+- 현재 저장 경로는 ../data/.csv이며 현재 작업 디렉터리 기준
 - 저장 폴더가 없으면 생성하고 to_csv(..., index=False) 사용
 - 같은 경로로 재실행하면 현재 데이터로 덮어쓰므로, 여러 DGP·학습 반복을 보관할 때는 서로 구분되는 경로 사용
 - 불러온 데이터의 x1·x2 열을 training_x, y 열을 training_y로 사용하며 point_id로 대응 유지
