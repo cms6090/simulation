@@ -14,7 +14,7 @@
 
 - 이 파일은 MC·CP 예측구간 비교 시뮬레이션의 구현 지침
 - 같은 training data에서 학습한 **동일한 fitted model**을 MC와 CP가 공유
-- MC는 training residual로 추정한 정규 오차분포에서 가상 반응값을 생성하는 방법
+- MC는 training data의 10-fold CV hold-out residual로 추정한 정규 오차분포에서 가상 반응값을 생성하는 방법
 - CP는 별도 calibration absolute residual과 conformal 순위로 구간을 구성하는 방법
 - 주 결과는 true model의 새 반응값에 대한 실제 포함 비율과 구간 길이
 - **첫 단계는 Random Forest가 true 함수를 충분히 잘 근사하는지 확인하는 것**
@@ -48,6 +48,10 @@ mc_error_family: gaussian
 coverage_estimator: empirical_inclusion
 calibration_repeat_policy: fixed_dataset
 viz_grid: {x1: [-0.8, -0.4, 0.0, 0.4, 0.8], x2: [-0.8, -0.4, 0.0, 0.4, 0.8]}
+variance_estimator_by_model: {random_forest: cv10_holdout_sse_over_n}  # 2026-09-28 확정
+fit_pilot_tuning_policy: cv10_grid_search_rmse_min  # 2026-09-28 확정, grid 720조합 사용
+cv_folds: 10  # 튜닝·분산 추정 공통
+cv_split_policy: separate_splits_for_tuning_and_variance  # tune_split ≠ cv_split
 ```
 
 - True DGP: Y=f(X)+sigma0(X)*epsilon, E(epsilon)=0, Var(epsilon)=1
@@ -62,7 +66,7 @@ viz_grid: {x1: [-0.8, -0.4, 0.0, 0.4, 0.8], x2: [-0.8, -0.4, 0.0, 0.4, 0.8]}
 - 12개 DGP, Random Forest 기준 12개 model–DGP 조합, alpha별 36개 결과 조건
 - Training·calibration·true 평가 반응값은 해당 scenario의 동일 DGP로 생성
 - MC는 모든 scenario에서 fitted mean+N(0,sigma2_hat)를 사용
-- MC의 분산은 training residual에서 추정한 scalar이며 true sigma0(X)를 사용하지 않음
+- MC의 분산은 training data의 10-fold CV hold-out residual에서 추정한 scalar이며 true sigma0(X)를 사용하지 않음
 - 비정규 DGP에서도 MC error family를 true error family로 자동 변경하지 않음
 - 조건별 결과에는 MC 정규·등분산 가정의 적합 여부에 따른 영향도 포함
 - sigma0는 표준편차 함수, sigma0(X)**2는 조건부 분산
@@ -79,10 +83,8 @@ viz_grid: {x1: [-0.8, -0.4, 0.0, 0.4, 0.8], x2: [-0.8, -0.4, 0.0, 0.4, 0.8]}
 미정값
 
 ```yaml
-variance_estimator_by_model: null
-rf_hyperparameters: null
+rf_tuning_grid: null  # 현재 720조합은 구현 제안값, rf_hyperparameters는 DGP별 CV 탐색 결과
 fit_accuracy_criteria: null
-fit_pilot_tuning_policy: null
 B: null
 training_design_repeat_policy: null
 master_seed: null
@@ -117,9 +119,9 @@ mc_quantile_method: null
 1. 고정 입력 X_train을 로드하거나 명시된 설계로 구성
 2. True model에서 y_train 생성
 3. 별도 calibration 생성 규칙 준비, calibration_repeat_policy=fixed_dataset이므로 실험 전체에서 한 세트만 생성
-4. 각 모델 j를 training data로 정확히 한 번 학습
+4. 각 모델 j의 하이퍼파라미터를 training data의 10-fold CV RMSE 최소로 선택(fit_pilot_tuning_policy, fold 분할 stream tune_split)한 뒤, 선택한 설정으로 training data 전체에 본 fitted model을 정확히 한 번 학습
 5. train_pred=model.predict(X_train)과 true_mean(X_train)을 비교하여 함수 RMSE·MAE·위치별 오차를 먼저 계산·저장하고 근사 상태 확인
-6. 함수 근사 확인 결과와 설정을 기록한 뒤 train_residual=y_train-train_pred로 sigma2_hat 추정
+6. 함수 근사 확인 결과와 설정을 기록한 뒤 10-fold CV hold-out residual(fold 분할 stream cv_split, 튜닝과 다른 분할)로 sigma2_hat 추정 (5절)
 7. 입력·모델·sigma2_hat을 고정하고 r=1..R_MC 반복, R_MC=200은 임시값
 8. 각 입력에서 MC 반응값 M_MC=1000개를 새로 생성하여 해당 반복 구간 구성
 9. calibration_repeat_policy=fixed_dataset에 따라 1번에서 이미 확정된 CP 구간을 재사용 (재계산 없음)
@@ -135,7 +137,8 @@ mc_quantile_method: null
 - 함수 비교 산점도와 위치별 오차로 평균 지표가 가리는 부정확한 영역 확인
 - 적합이 부족한 조건은 모델 설정·적합 상태를 먼저 검토하고 미확인 상태를 성공으로 표시하지 않음
 - 충분한 정확도의 기준은 미정이므로 자의적인 threshold·통과 판정 금지
-- 설정 탐색은 별도의 fit pilot 단계로 제공하고, 본 실험에서 고정한 RF 설정을 사용
+- 설정 탐색은 fit_pilot_tuning_policy(10-fold CV RMSE 최소)로 수행하고, 선택한 RF 설정을 본 학습에 고정
+- 튜닝 보조 적합(조합 수×10)은 본 fitted model 학습 횟수(DGP당 1회)와 구분하여 기록
 - 잘 맞는 seed만 선택하거나 실패한 반복을 조용히 버리지 않음
 - True 함수를 튜닝에 사용하면 simulation-only tuning으로 기록
 - 추가 diagnostic 입력의 사용 여부와 평가 범위를 명시
@@ -144,12 +147,16 @@ mc_quantile_method: null
 
 ## 5. 분산 추정 계약
 
-- sigma2_hat은 training residual에서 계산
-- 분산 추정에 사용하는 데이터는 training residual이며 true 분산으로 대체하지 않음
+- 확정 규칙(2026-09-28): sigma2_hat=mean((y_train-cv_pred)**2), cv_pred는 10-fold CV hold-out 예측
+- cv_pred[i]는 점 i가 속한 fold를 제외한 90% training data로 학습한 보조 모델의 예측이며, 각 점은 정확히 한 번 예측
+- 보조 모델 10개는 본 fitted model과 같은 하이퍼파라미터 사용, random_state는 cv_model stream
+- CV residual은 본 fitted model의 in-sample residual이 아님을 결과에 명시
+- fold 분할은 cv_split stream으로 튜닝(tune_split)과 다른 분할 사용 — 같은 CV 오차를 최소화한 설정을 같은 분할로 재평가할 때의 낙관적 편향 완화 (같은 데이터이므로 완전히 제거되지는 않음)
+- 보조 적합은 분산 추정 단계에서만 수행하며 MC 내부 fitting이 아님(6절), 보조 적합 수를 기록
+- 분산 추정에 사용하는 데이터는 training data이며 true 분산으로 대체하지 않음
 - 모델별 추정 규칙·분모·보정·사용 표본 수를 결과에 기록
-- RF의 잔차분산 추정 규칙은 미정이며 모델에 근거 없는 자유도 보정을 도입하지 않음
-- RF의 SSE/n, OOB 등의 선택은 별도 결정이며 아직 확정되지 않음
-- OOB로 변경하는 경우 training in-sample residual 방식과 다르다는 점을 사용자에게 명시
+- 분모는 n, 모델에 근거 없는 자유도 보정을 도입하지 않음
+- In-sample·OOB residual 방식은 사용하지 않음 (2026-09-28 비교 후 제외)
 - 추정값이 음수·비유한이면 오류, 0이면 퇴화 구간 상태 기록 후 별도 처리
 - 작은 상수로 강제 치환하여 적합 문제를 숨기지 않음
 
@@ -243,9 +250,9 @@ mc_quantile_method: null
 - RNG는 난수 생성기이며 seed로 같은 실험을 재현하기 위한 장치
 - master seed와 scenario/model/b/r/cal_id/point_id/stage의 안정적 ID로 substream 분리
 - Python hash()와 병렬 완료 순서로 seed 생성 금지
-- train_error, calibration_input, calibration_error, model, mc_error, eval_error stream 구분
+- train_error, calibration_input, calibration_error, model, tune_split, cv_split, cv_model, mc_error, eval_error stream 구분
 - 데이터 공유를 의도한 모델 간에는 같은 데이터 ID 사용
-- 전체 실험 반복의 fitting과 MC 내부 fitting을 구분
+- 전체 실험 반복의 fitting, 튜닝·분산 추정 보조 fitting, MC 내부 fitting을 구분 (MC 내부 fitting은 없음)
 - 반복 정책은 입력 고정 범위, calibration 입력 고정 여부, calibration 반응값 고정 여부를 각각 기록. calibration은 calibration_repeat_policy=fixed_dataset에 따라 입력·반응값 모두 실험 전체에서 고정
 - 공유 calibration이 있는 반복들을 모두 독립 실험으로 간주하지 않음
 - $B$개의 독립 실험이 실제 확보된 경우에만 반복별 요약의 SD/sqrt(B)를 해당 평균의 SE로 사용
@@ -282,7 +289,7 @@ mc_quantile_method: null
 | --- | --- |
 | resolved_config.json | 설정값·상태·설계 버전·반복 정책 |
 | model_diagnostics.csv | scenario, model, b, point_id, true_mean, true_scale, true_variance, fitted_mean, mean_error |
-| variance_diagnostics.csv | scenario, model, b, estimator, denominator, design_noise_variance, population_noise_variance, sigma2_hat, variance_gap_design |
+| variance_diagnostics.csv | scenario, model, b, estimator, denominator, cv_folds, n_aux_fits, cv_split_seed, design_noise_variance, population_noise_variance, sigma2_hat, variance_gap_design |
 | interval_metrics.csv | scenario, model, b, r, cal_id, mc_id, eval_id, point_id, alpha, method, lower, upper, center, half_width, length, y_true, covered |
 | point_summary.csv | scenario, model, b, point_id, alpha, method, n_covered, n_evaluated, coverage, length_mean, length_sd |
 | method_comparison.csv | 동일 비교 key, coverage_cp_minus_mc, length_cp_minus_mc |
