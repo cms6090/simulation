@@ -2,3 +2,4 @@ venv/
 venv
 results/
 results
+.ipynb_checkpoints/

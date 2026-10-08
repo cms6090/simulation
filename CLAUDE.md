@@ -2,12 +2,14 @@
 
 ## 1. 작업 목표와 우선순위
 
-Python Jupyter Notebook `MC_CP_simulation.ipynb`를 작성한다. 최신 동반 설계 문서 `시뮬(7).md`에 따라 Random Forest 기반 MC·split CP의 **고정 grid 입력별 conditional coverage와 평균 예측구간 길이**를 비교한다.
+Python Jupyter Notebook `notebooks/MC_CP_simulation.ipynb`를 작성한다. 설계 기준 문서는 프로젝트 루트의 `시뮬.md`이며, 이에 따라 Random Forest 기반 MC·split CP의 **고정 grid 입력별 conditional coverage와 평균 예측구간 길이**를 비교한다.
 
+- **작업은 단계별로 진행한다.** 각 단계에서 무엇을 만들거나 바꿀지(대상 파일, 내용, 설치할 패키지, 실행할 명령) 먼저 사용자에게 계획으로 설명하고, 사용자가 OK한 뒤에 파일 생성·수정·설치·실행을 한다. 승인받은 범위를 넘는 작업은 다음 단계 계획으로 다시 제안한다. 읽기 전용 확인(파일 열람·검색)은 승인 없이 해도 된다.
 - 설명과 주석은 한국어, 코드 변수명은 영어로 작성한다. 수식과 코드의 대응을 설명한다.
 - 노트북은 새 커널에서 위에서 아래로 실행 가능하게 만든다. 숨겨진 셀 상태나 수동 실행 순서에 의존하지 않는다.
 - 주 구현은 노트북에서 이해할 수 있게 작성한다. 불필요한 클래스·프레임워크·여러 모듈로 분산하지 않는다.
 - 결과를 보고 coverage가 좋아지도록 seed·설정을 선택하거나 실패한 반복을 제외하지 않는다.
+- 노트북은 `notebooks/`에 둔다. 실행 위치(작업 디렉터리)와 무관하게 프로젝트 루트를 찾아 결과 경로를 지정한다. 예: 현재 디렉터리 또는 상위 디렉터리 중 `시뮬.md`가 있는 곳을 `PROJECT_ROOT`로 사용하고, 찾지 못하면 오류를 낸다.
 - 이번 산출물은 노트북과 실행에 필요한 간단한 의존성 목록이다. 구현 후 작은 smoke 실행으로 검증하고, 실행한 범위를 정확하게 보고한다.
 
 ## 2. 확정 설계와 구현 기본값
@@ -319,7 +321,7 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 
 ## 10. 결과 저장과 노트북 표시
 
-프로젝트 루트의 `results/<scenario>/` 아래에 저장한다. Smoke는 `results/smoke/<scenario>/`로 분리하여 본 결과와 섞이지 않게 한다. CSV는 `index=False`로 저장한다.
+노트북 위치(`notebooks/`)가 아니라 프로젝트 루트의 `results/<scenario>/` 아래(`PROJECT_ROOT / 'results'`)에 저장한다. Smoke는 `results/smoke/<scenario>/`로 분리하여 본 결과와 섞이지 않게 한다. CSV는 `index=False`로 저장한다.
 
 | 파일 | 필수 내용 |
 | --- | --- |
