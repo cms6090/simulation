@@ -227,10 +227,92 @@ $$
 
 ## 9. 난수와 계산량
 
-- 고정 scenario ID와 stage ID를 사용해 seed를 구성한다. Python `hash()`나 병렬 작업 완료 순서에 의존하지 않는다.
-- 예: `SeedSequence([MASTER_SEED, scenario_id, stage_id, r, b])`로 독립 stream을 구성하고 stage 매핑을 한 곳에 정의한다.
-- Training X·오차, 기준 RF, CV 분할·모델, calibration X·오차, test 오차, MC training 오차·모델·새 오차를 구분한다.
-- r, b를 바꿔야 할 곳에서 같은 seed로 생성기를 매번 초기화하지 않는다.
+### 9.1 난수 관리 — master seed와 단계·반복 ID 조합
+
+이 문서를 기준으로 새 노트북을 처음부터 구현한다. 이전 구현의 seed 목록이나 전역 RNG 상태에 의존하지 않는다. `MASTER_SEED=0` 하나를 시작점으로 사용하되, 아래 키로 각 난수 흐름을 구분한다.
+
+```text
+[MASTER_SEED, scenario_id, stage_id, r, b, fold]
+```
+
+- `scenario_id`는 아래 고정 매핑을 사용한다. 실행 목록을 재정렬하거나 일부 DGP만 실행해도 ID를 바꾸지 않는다.
+- `r=1,...,R`, `b=1,...,B`, `fold=1,...,CV_FOLDS`로 사용한다. 해당 단계에 필요 없는 인덱스는 0으로 둔다.
+- 아래 숫자는 원시 seed의 연속 범위가 아니라 **단계 식별자**이다. 수만 개 seed를 수동 목록으로 관리하지 않는다.
+- `common`은 한 DGP 안에서 MC·CP가 기준 training과 fitted model을 공유한다는 뜻이다. 기본 구현에서는 DGP별 난수 흐름을 scenario ID로 구분한다.
+
+| 단계 이름 | stage_id | 사용하는 인덱스 | DGP당 흐름 수 | 용도 |
+| --- | ---: | --- | ---: | --- |
+| `common_dataset` | 0 | 없음 | 1 | 원래 training X와 오차를 순서대로 생성 |
+| `common_training` | 1 | 없음 | 1 | 기준 RF 학습 |
+| `cv_split` | 2 | 없음 | 1 | CV fold 분할 |
+| `cv_model` | 3 | fold | CV_FOLDS | 각 fold의 RF 학습 |
+| `cp_calibration` | 4 | r | R=200 | True DGP에서 calibration X·Y 생성 |
+| `mc_dataset` | 5 | r, b | R×B=40,000 | 고정 training X에서 가상 training 오차 생성 |
+| `mc_model` | 6 | r, b | R×B=40,000 | 가상 training으로 RF 재학습 |
+| `mc_new_error` | 7 | r, b | R×B=40,000 | MC grid 예측에 추가할 Gaussian 오차 생성 |
+| `test_error` | 8 | r | R=200 | True DGP에서 실제 평가용 grid 오차 생성 |
+
+CP는 별도 모델을 학습하지 않으므로 `cp_training` 대신 `cp_calibration`이라는 이름을 사용한다. CV를 다른 분산 추정법으로 교체하면 사용하지 않는 CV 단계 ID는 그대로 예약해 두며, 다른 단계 번호를 당기지 않는다.
+
+### 9.2 구현 예시
+
+```python
+import numpy as np
+
+SCENARIO_IDS = {
+    'linear_homo_gaussian': 0,
+    'linear_homo_student_t': 1,
+    'nonlinear_homo_gaussian': 2,
+    'nonlinear_homo_student_t': 3,
+}
+STAGE_IDS = {
+    'common_dataset': 0, 'common_training': 1,
+    'cv_split': 2, 'cv_model': 3, 'cp_calibration': 4,
+    'mc_dataset': 5, 'mc_model': 6,
+    'mc_new_error': 7, 'test_error': 8,
+}
+
+def seed_sequence(scenario, stage, r=0, b=0, fold=0):
+    return np.random.SeedSequence([
+        MASTER_SEED, SCENARIO_IDS[scenario], STAGE_IDS[stage],
+        r, b, fold,
+    ])
+
+def make_rng(scenario, stage, r=0, b=0, fold=0):
+    return np.random.Generator(np.random.PCG64(
+        seed_sequence(scenario, stage, r, b, fold)
+    ))
+
+def make_random_state(scenario, stage, r=0, b=0, fold=0):
+    # sklearn random_state용. 모델·분할마다 새 객체를 전달한다.
+    words = seed_sequence(scenario, stage, r, b, fold).generate_state(4)
+    return np.random.RandomState(words)
+```
+
+- NumPy 데이터 생성에는 `make_rng`, RF와 `KFold`의 `random_state`에는 `make_random_state`를 사용한다.
+- 같은 `RandomState` 객체를 여러 모델에서 재사용하지 않는다. 각 키에서 새 객체를 만든다.
+
+### 9.3 난수 사용과 공유 규칙
+
+- 원래 training은 `make_rng(scenario, 'common_dataset')` 하나를 만들고, 그 생성기에서 X와 오차를 차례로 뽑는다. X와 오차를 뽑기 전에 같은 키로 각각 재초기화하지 않는다.
+- 기준 RF는 `make_random_state(scenario, 'common_training')`을 사용한다.
+- CV 분할은 `make_random_state(scenario, 'cv_split')`, 각 fold RF는 `make_random_state(scenario, 'cv_model', fold=k)`를 사용한다. Fold별 random_state를 지정할 수 있도록 명시적 fold 루프를 사용한다.
+- 매 r의 calibration은 `make_rng(scenario, 'cp_calibration', r=r)`에서 X와 오차를 순서대로 생성한다.
+- 매 (r,b)의 가상 training 오차는 `make_rng(scenario, 'mc_dataset', r=r, b=b)`에서 길이 N_TRAIN으로 뽑는다. Training X는 재생성하지 않는다.
+- 매 (r,b)의 RF는 `make_random_state(scenario, 'mc_model', r=r, b=b)`로 새로 학습한다.
+- MC 새 관측오차는 `make_rng(scenario, 'mc_new_error', r=r, b=b)`에서 `normal(0, sigma_hat, size=len(X_grid))`로 한 번에 뽑는다.
+- 실제 평가 오차는 `make_rng(scenario, 'test_error', r=r)`에서 true DGP에 따라 길이 len(X_grid)로 뽑는다. Gaussian은 표준정규, Student-t는 t_3/sqrt(3)이며 현재 true 표준편차는 1이다.
+- **MC 새 관측오차와 실제 test 오차는 다른 난수 흐름이다.** 전자는 구간 구성, 후자는 포함 여부 평가에만 사용한다.
+- Seed는 관측값 하나마다 필요하지 않다. 생성기 하나에서 벡터를 뽑는다. Grid i마다 같은 키로 생성기를 재초기화해서 같은 오차를 반복하지 않는다.
+- 같은 r의 실제 test Y 벡터는 MC·CP와 두 alpha에 공통으로 사용한다. Alpha별 난수 흐름을 따로 만들지 않는다.
+- 같은 (r,b)의 RF가 모든 grid를 예측한다. Grid별 모델 seed나 재학습을 추가하지 않는다.
+- Python `hash()`, 전역 `np.random.seed()`, 실행 순서에 따른 단순 seed 증가, 병렬 작업 완료 순서에 의존하지 않는다.
+- 위 키 방식은 난수 흐름을 재현 가능하게 분리하기 위한 것이다. 유한한 의사난수로 수학적 독립성을 증명한다고 설명하지 않는다.
+- `config.json`에 MASTER_SEED, SCENARIO_IDS, STAGE_IDS, 키 순서, 인덱스 규칙, PCG64 및 sklearn용 RandomState 변환 규칙을 저장한다. 개별 seed 80,000개 이상의 목록은 저장할 필요 없다.
+- 같은 키·같은 설정·같은 실행 환경에서는 재현 가능하게 구현한다. 라이브러리 버전도 저장한다.
+
+### 9.4 계산량과 실행
+
 - MC 표본을 전부 저장하지 않는다. 각 r에서 B×25 배열만 유지하고 개별 RF는 예측 후 해제한다.
 - 기본은 바깥 루프 순차 실행과 RF 내부 병렬화이다. 바깥 병렬화를 사용하면 RF 내부 `n_jobs=1`로 중첩 병렬화를 피한다.
 - Full MC 학습 수는 DGP당 B×R=40,000회, 4개 DGP 전체 160,000회이다. 기준 RF와 CV 학습은 이 수에 별도 추가된다.
@@ -285,6 +367,8 @@ Full 실행 셀은 사용자가 명시적으로 실행할 수 있게 구성한�
 - 같은 r, alpha에서 CP 길이가 grid 전체에 동일한지 확인한다.
 - 동일 표본으로 계산한 95% 구간이 90% 구간을 포함하는지 확인한다.
 - 동일 seed와 설정의 작은 재실행에서 결과가 재현되는지 확인한다.
+- 난수 키의 단계·r·b·fold 배정이 맞는지 확인하고, 작은 예제에서 특정 키를 실행 순서와 무관하게 다시 생성할 수 있는지 확인한다.
+- MC 새 관측오차와 실제 test 오차의 단계가 구분되고, 같은 r의 test Y가 두 방법·두 alpha에 공유되는지 확인한다.
 - Student-t(df=3)는 두꺼운 꼬리이므로 작은 표본분산이 1과 매우 가깝다는 것을 필수 assertion으로 삼지 않는다.
 - 관측 coverage가 정확히 0.90/0.95이거나 CP≥MC여야 한다는 검증을 넣지 않는다.
 - RF를 재학습한 MC 표본은 일반적으로 단일 정규분포 표본이 아니다. 구간이 `base_prediction ± z*sigma_hat`와 같아야 한다고 검증하지 않는다.
