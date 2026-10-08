@@ -1,0 +1,292 @@
+# MC vs Split CP 시뮬레이션 — Claude Code 구현 지침
+
+## 1. 작업 목표와 우선순위
+
+Python Jupyter Notebook `MC_CP_simulation.ipynb`를 작성한다. 최신 동반 설계 문서 `시뮬(7).md`에 따라 Random Forest 기반 MC·split CP의 **고정 grid 입력별 conditional coverage와 평균 예측구간 길이**를 비교한다.
+
+- 최신 사용자 지시가 최우선이다. 이 문서는 2026-10-08 미팅 이후 설계를 반영한다.
+- 과거 CLAUDE 문서의 12개 DGP, training 입력에서 평가, MC 재학습 없음, calibration 고정, 99% 수준, marginal 평가 지침은 적용하지 않는다.
+- 설명과 주석은 한국어, 코드 변수명은 영어로 작성한다. 수식과 코드의 대응을 설명한다.
+- 노트북은 새 커널에서 위에서 아래로 실행 가능하게 만든다. 숨겨진 셀 상태나 수동 실행 순서에 의존하지 않는다.
+- 주 구현은 노트북에서 이해할 수 있게 작성한다. 불필요한 클래스·프레임워크·여러 모듈로 분산하지 않는다.
+- 결과를 보고 coverage가 좋아지도록 seed·설정을 선택하거나 실패한 반복을 제외하지 않는다.
+- 이번 산출물은 노트북과 실행에 필요한 간단한 의존성 목록이다. 구현 후 작은 smoke 실행으로 검증하고, 실행한 범위를 정확하게 보고한다.
+
+## 2. 확정 설계와 구현 기본값
+
+### 확정 설계
+
+```python
+SCENARIOS = [
+    'linear_homo_gaussian',
+    'linear_homo_student_t',
+    'nonlinear_homo_gaussian',
+    'nonlinear_homo_student_t',
+]
+N_TRAIN = 1000
+N_CAL = 1000
+GRID_AXIS = [-1.0, -0.5, 0.0, 0.5, 1.0]
+ALPHAS = [0.10, 0.05]
+R = 200  # 구간 생성·평가 반복
+B = 200  # 각 r 안에서 생성하는 가상 training 데이터셋·재학습 모델 수
+VARIANCE_ESTIMATOR = 'cv'
+MC_ERROR_FAMILY = 'gaussian'
+```
+
+Training과 calibration은 각각 1,000개이다. 하나의 1,000개 표본을 둘로 나누지 않는다. Grid는 두 축의 모든 조합 25개이다. 각 scenario에서 원래 training은 한 번 생성하고, 기준 RF도 한 번 학습한다.
+
+### 설계 문서에 수치가 없는 항목의 구현 기본값
+
+아래는 연구에서 확정된 값이 아니라, 실행 가능한 초안을 위한 **변경 가능한 구현 제안값**이다. 첫 설정 셀과 `config.json`에서 이 구분을 명시한다. 사용자가 별도로 지정한 값이 있으면 우선 적용한다.
+
+```python
+MASTER_SEED = 0
+CV_FOLDS = 10
+MC_QUANTILE_METHOD = 'linear'
+RF_PARAMS = dict(
+    n_estimators=1000,
+    min_samples_leaf=20,
+    max_features=1.0,
+    max_samples=0.7,
+    max_depth=None,
+    bootstrap=True,
+    n_jobs=-1,
+)
+```
+
+- RF 자동 튜닝은 기본 구현에 넣지 않는다. 기준 모델, CV 모델, MC 재학습 모델에 동일한 구조적 하이퍼파라미터를 사용한다.
+- `random_state`는 모델마다 재현 가능한 별도 seed를 사용한다.
+- CV fold 수와 MC 분위수 방식을 결과 메타데이터에 저장한다.
+- Full 설정을 줄여 놓고 본 실험인 것처럼 보고하지 않는다. 별도 `RUN_MODE='smoke'/'full'`로 실행 규모를 구분한다.
+
+## 3. DGP와 배열 계약
+
+입력의 두 좌표와 관측치는 독립적으로 U(-1,1)에서 생성한다.
+
+$$
+m_L(x)=x_1+x_2,\qquad
+m_N(x)=\sqrt{2/3}\sin(\pi x_1)+x_2.
+$$
+
+모든 조건에서 표준편차는 1이다.
+
+$$
+Y=m(X)+\varepsilon,\qquad
+\varepsilon_G\sim N(0,1),\qquad
+\varepsilon_T=T/\sqrt3,\quad T\sim t_3.
+$$
+
+- Student-t는 반드시 `standard_t(df=3) / sqrt(3)`으로 표준화한다.
+- 두 오차의 평균은 0, 분산은 1이다. 두 평균함수의 입력 분포에 대한 평균은 0, 분산은 2/3이다.
+- 참평균은 DGP 생성과 진단에만 사용한다. fitted model이나 추정분산을 참함수·참분산으로 대체하지 않는다.
+- `X_train.shape == (1000, 2)`, `y_train.shape == (1000,)`.
+- `X_grid.shape == (25, 2)`, grid 순서와 `grid_id`를 처음에 정한 뒤 고정한다.
+- `X_cal.shape == (1000, 2)`, `y_cal.shape == (1000,)`.
+- 각 r의 `y_grid_true.shape == (25,)`.
+- 각 r의 `mc_predictive_samples.shape == (B, 25)`: 행은 재학습 모델 b, 열은 grid i이다.
+- NumPy의 `X[:, 0]`, `X[:, 1]`은 각각 설명변수 열이고, `X[i, :]`가 하나의 입력 벡터이다.
+- 별도의 random test 및 marginal 집계는 만들지 않는다.
+
+## 4. 기준 모델과 CV 잔차분산
+
+각 scenario에서 다음을 한 번만 수행한다.
+
+1. True DGP로 training 생성.
+2. 전체 training으로 기준 RF `base_model` 학습.
+3. `base_train_pred`와 `base_grid_pred` 계산.
+4. Training 내부 K-fold out-of-fold 예측으로 분산 추정.
+5. `X_train`, `y_train`, `base_model`, `sigma2_hat`, `X_grid`를 모든 r에서 고정.
+
+관측값 j가 속한 fold를 k(j)라 할 때,
+
+$$
+r_j^{CV}=Y_j^{train}-\widehat f^{(-k(j))}(X_j^{train}),\qquad
+\widehat\sigma^2=\frac1{n_{train}}\sum_{j=1}^{n_{train}}(r_j^{CV})^2.
+$$
+
+- `KFold(shuffle=True, random_state=...)` 사용. 각 관측값은 자신이 제외된 fold 모델의 예측을 정확히 한 번 받는다.
+- 분산 추정은 OOF 잔차 전체의 **제곱평균**이다. `np.var(residuals)`나 fold별 RMSE의 평균을 제곱한 값으로 대체하지 않는다.
+- Calibration·grid 평가 반응값을 CV에 사용하지 않는다.
+- 기준 RF를 CV fold 모델로 덮어쓰지 않는다. 최종 기준 RF는 전체 training으로 학습한 모델이다.
+- CV는 r 루프 밖에서 한 번 수행한다. MC 가상 데이터마다 CV·분산 재추정을 하지 않는다.
+- Gaussian 생성기의 `scale`에는 `sigma_hat = sqrt(sigma2_hat)`을 전달한다.
+- 잔차 제곱평균에는 평균함수 추정오차도 포함될 수 있다. 순수 오차분산의 불편추정량이라고 설명하지 않는다.
+- 비유한 추정값은 오류 처리한다. 0이면 퇴화 상태를 명시하고 작은 양수로 몰래 바꾸지 않는다.
+- 진단으로 `sigma2_hat`, pooled CV RMSE, grid의 true mean 대 fitted mean RMSE·MAE를 출력한다. 진단값으로 임의의 통과 기준을 만들지 않는다.
+
+## 5. 반복 구조 — 반드시 이 순서와 공유 범위를 유지
+
+```text
+for scenario:
+    training 생성 및 기준 RF 학습
+    CV 잔차로 sigma2_hat 추정
+    grid와 기준 모델 예측값 준비
+    for r in 1..R:
+        true DGP에서 grid 반응값 25개 새로 생성
+        true DGP에서 calibration X, Y 각 1000개 새로 생성
+        for b in 1..B:
+            원래 training X에서 가상 Y* 1000개 생성
+            새로운 RF를 가상 training으로 학습
+            모든 grid 25개를 한 번에 예측
+            예측값 각각에 독립적인 새 Gaussian 오차 추가
+        동일한 B×25 MC 표본에서 두 alpha의 구간 생성
+        기준 RF와 이번 calibration에서 두 alpha의 CP 구간 생성
+        동일한 y_grid_true로 두 방법·두 alpha의 포함 여부 평가
+        반복별 구간 하한·상한·길이·포함 여부 저장
+    입력 벡터·alpha·방법별 집계 및 파일 저장
+```
+
+고정 대상: 원래 training, 기준 RF, 추정분산, grid X.
+재생성 대상: calibration X·Y, grid Y, MC 가상 training Y, MC 재학습 모델, MC 새 관측오차.
+
+평가용 grid Y는 매 r마다 입력별 하나를 생성한다. MC·CP와 두 alpha가 같은 값을 공유한다. 학습 Y, calibration Y, MC 가상 Y를 평가 Y로 재사용하지 않는다.
+
+## 6. MC 구간
+
+각 r, b에서 원래 training 입력을 그대로 사용한다.
+
+$$
+Y_j^{*(r,b)}=\widehat f(X_j^{train})+\epsilon_j^{*(r,b)},
+\qquad \epsilon_j^{*(r,b)}\sim N(0,\widehat\sigma^2).
+$$
+
+이 가상 데이터로 새로운 RF를 학습한 후,
+
+$$
+\widetilde Y_i^{*(r,b)}
+=\widehat f^{*(r,b)}(x_i)+\epsilon_{new,i}^{*(r,b)},
+\qquad \epsilon_{new,i}^{*(r,b)}\sim N(0,\widehat\sigma^2).
+$$
+
+- 가상 training 오차와 새 관측오차는 별도 독립 난수이다. 모든 i, r, b에서 필요한 새 오차를 생성한다.
+- Student-t scenario에서도 MC 가상 오차는 Gaussian이다. True DGP 오차와 혼동하여 Student-t로 자동 변경하지 않는다.
+- 매 b에 **RF 전체를 하나 학습**한다. RF 안의 개별 트리 예측을 B개 모델 예측으로 대체하지 않는다.
+- B는 가상 데이터셋 수이며 training 크기 1000이나 RF 트리 수와 다르다.
+- 같은 B개 모델을 25개 입력과 두 alpha에 공유한다. 입력별·alpha별로 다시 학습하지 않는다.
+- 기준 예측값에 오차만 더하는 방식으로 MC 재학습을 생략하지 않는다.
+- 이전 b 모델에 이어서 학습하는 warm-start를 사용하지 않는다.
+- 관측오차 추가를 생략하여 평균에 대한 구간으로 바꾸지 않는다.
+
+각 grid 열에서 B개 가상 반응값의 분위수로 구간을 계산한다.
+
+$$
+C_{MC,\alpha}^{(r)}(x_i)
+=[Q_{\alpha/2}(\widetilde Y_i^{*(r,1:B)}),
+Q_{1-\alpha/2}(\widetilde Y_i^{*(r,1:B)})].
+$$
+
+`np.quantile(..., axis=0, method=MC_QUANTILE_METHOD)`와 같이 B 축으로 계산한다. 다른 grid의 값을 섞지 않는다. 실제 평가 Y는 분위수 계산에 사용하지 않는다.
+
+## 7. CP 구간
+
+매 r마다 독립적인 calibration X·Y를 true DGP에서 생성한다. 기준 모델은 고정한다.
+
+$$
+S_a^{(r)}=|Y_a^{cal,(r)}-\widehat f(X_a^{cal,(r)})|,
+\quad
+k_\alpha=\lceil(n_{cal}+1)(1-\alpha)\rceil.
+$$
+
+- 정렬한 score에서 0-based index `k-1`을 선택한다.
+- n_cal=1000에서 alpha=0.10은 901번째, alpha=0.05는 951번째이다.
+- k>n_cal이면 q_hat=inf로 처리한다. CP 분위수에 선형 보간을 적용하지 않는다.
+- CP에서 별도 RF를 학습하지 않는다. MC의 재학습 RF도 사용하지 않는다.
+
+$$
+C_{CP,\alpha}^{(r)}(x_i)
+=[\widehat f(x_i)-\widehat q_\alpha^{(r)},
+\widehat f(x_i)+\widehat q_\alpha^{(r)}].
+$$
+
+같은 r, alpha에서 q_hat은 모든 grid에 공통이다. CP 길이는 모두 2q_hat이지만 중심은 입력별로 다르다. 다음 r에서는 calibration과 q_hat을 새로 계산한다.
+
+## 8. Coverage와 길이 집계
+
+$$
+I_{h,i,r,\alpha}
+=\mathbf1\{L_{h,i,r,\alpha}\le Y_i^{grid,(r)}\le U_{h,i,r,\alpha}\},
+\quad
+\ell_{h,i,r,\alpha}=U_{h,i,r,\alpha}-L_{h,i,r,\alpha}.
+$$
+
+$$
+\widehat c_{h,\alpha}(x_i)=\frac1R\sum_r I_{h,i,r,\alpha},
+\qquad
+\overline\ell_{h,\alpha}(x_i)=\frac1R\sum_r\ell_{h,i,r,\alpha}.
+$$
+
+- 경계 포함 `lower <= y_true <= upper`로 평가한다.
+- 포함 여부와 관계없이 모든 반복의 길이를 평균한다.
+- 평균 하한·상한의 포함 여부로 coverage를 대체하지 않는다.
+- 참평균 m(x_i)의 포함 여부는 주 평가가 아니다. 새 관측값 Y를 평가한다.
+- 집계 key는 `[scenario, grid_id, alpha, method]`이다. alpha나 grid를 평균으로 없애지 않는다.
+- 같은 grid·alpha에서 `coverage_cp_minus_mc`, `length_cp_minus_mc`를 계산한다.
+- 현재는 training을 고정하고 구간 생성과 새 Y의 무작위성을 평균한 X-conditional coverage이다. Training 반복 실험이나 calibration 고정 실험으로 설명하지 않는다.
+- CP가 모든 x에서 목표 conditional coverage를 보장한다고 주장하지 않는다.
+- 목표 coverage와의 차이를 먼저 보고 길이를 함께 해석한다. 두 방법의 coverage가 서로 가깝다는 이유만으로 둘 다 정확하다고 판단하지 않는다.
+
+## 9. 난수와 계산량
+
+- 고정 scenario ID와 stage ID를 사용해 seed를 구성한다. Python `hash()`나 병렬 작업 완료 순서에 의존하지 않는다.
+- 예: `SeedSequence([MASTER_SEED, scenario_id, stage_id, r, b])`로 독립 stream을 구성하고 stage 매핑을 한 곳에 정의한다.
+- Training X·오차, 기준 RF, CV 분할·모델, calibration X·오차, test 오차, MC training 오차·모델·새 오차를 구분한다.
+- r, b를 바꿔야 할 곳에서 같은 seed로 생성기를 매번 초기화하지 않는다.
+- MC 표본을 전부 저장하지 않는다. 각 r에서 B×25 배열만 유지하고 개별 RF는 예측 후 해제한다.
+- 기본은 바깥 루프 순차 실행과 RF 내부 병렬화이다. 바깥 병렬화를 사용하면 RF 내부 `n_jobs=1`로 중첩 병렬화를 피한다.
+- Full MC 학습 수는 DGP당 B×R=40,000회, 4개 DGP 전체 160,000회이다. 기준 RF와 CV 학습은 이 수에 별도 추가된다.
+- 길이 추가는 모델 학습 횟수나 결과 행 수를 증가시키지 않는다.
+- 진행률을 표시하고 r 단위로 완료 상태를 기록한다. 재개를 구현하면 완료된 r만 재사용하고 설정 일치와 key 중복을 확인한다.
+
+## 10. 결과 저장과 노트북 표시
+
+프로젝트 루트의 `results/<scenario>/` 아래에 저장한다. Smoke는 `results/smoke/<scenario>/`로 분리하여 본 결과와 섞이지 않게 한다. CSV는 `index=False`로 저장한다.
+
+| 파일 | 필수 내용 |
+| --- | --- |
+| `config.json` | 설계 버전, 실행 모드, 확정값/구현 기본값 구분, seed·stage 매핑, R·B·n_train·n_cal·grid·alpha, RF 설정, CV folds, sigma2_hat, MC 분위수 방식, 라이브러리 버전, 완료 r 목록 |
+| `test_grid.csv` | scenario, grid_id, x1, x2, true_mean, base_prediction |
+| `interval_metrics.csv` | scenario, r, grid_id, x1, x2, alpha, method, y_true, true_mean, lower, upper, covered, length |
+| `point_summary.csv` | scenario, grid_id, x1, x2, alpha, method, n_covered, n_evaluated, coverage, length_mean |
+| `method_comparison.csv` | scenario, grid_id, x1, x2, alpha, mc_coverage, cp_coverage, coverage_cp_minus_mc, mc_length_mean, cp_length_mean, length_cp_minus_mc |
+
+- method 값은 `mc`, `cp`로 통일한다. r과 grid_id의 표기 범위를 문서화한다.
+- Full에서는 DGP당 원시 결과 20,000행, point_summary 100행, method_comparison 50행이다. 전체 4개에서는 각각 80,000행, 400행, 200행이다.
+- 원시 결과 key `[scenario,r,grid_id,alpha,method]`는 유일해야 한다.
+- 미완료 결과에서는 n_evaluated를 실제 완료 수로 표시하고 완료 여부를 명시한다. R=200으로 나누어 완성된 결과처럼 표시하지 않는다.
+- 노트북의 입력별 요약 뷰는 scenario별로 나누고 `x='[x1, x2]'`, alpha, method를 index로 표시한다. 원본 저장 데이터는 수치 좌표와 grid_id를 유지한다.
+- 비교표에는 두 방법의 coverage와 평균 길이, 각각의 차이를 나란히 표시한다.
+- 기본 결과는 표로 제시한다. 임의의 추가 grid나 복잡한 시각화를 필수 구현에 넣지 않는다.
+- `results/`와 `.ipynb_checkpoints/`는 `.gitignore`에 추가한다. 기존 결과를 삭제하거나 Git 이력을 변경하지 않는다.
+
+## 11. 권장 노트북 셀 구성
+
+1. 연구 목적, 평가 대상과 반복 구조 설명
+2. Imports, 실행 환경, 설정 셀과 smoke/full 선택
+3. DGP 및 grid 생성 함수
+4. RF 생성·CV 잔차분산 함수
+5. MC 구간·CP 순위 분위수 함수
+6. 한 scenario 실행 함수와 r 루프
+7. 결과 저장·집계 함수
+8. 작은 결정적 예제 기반 검증
+9. Smoke 실행 및 진단·결과표
+10. Full 실행 셀과 실행 안내
+11. 저장된 결과를 읽어 비교표 표시
+
+Full 실행 셀은 사용자가 명시적으로 실행할 수 있게 구성한다. 구현 검증 과정에서 160,000회 RF 학습을 자동 시작하지 않는다. Smoke는 예를 들어 4개 DGP, R=2, B=5, RF 트리 수 10으로 실행하되 n_train, n_cal, grid는 유지한다. Smoke 설정은 연구 결과가 아닌 구조 검증임을 표시한다. 실제 사용한 smoke 값을 저장한다.
+
+## 12. 필요한 검증과 완료 보고
+
+- 알려진 score 배열로 CP의 순위 선택과 k>n_cal 경계를 확인한다.
+- 작은 수치 배열로 MC 분위수 축이 B 축인지 확인한다.
+- OOF 예측에서 각 관측값의 학습 제외와 한 번의 예측을 확인한다.
+- 작은 실행에서 MC fit 호출이 정확히 R×B인지 확인한다. 기준 RF·CV 호출과 구분한다.
+- 각 r에서 calibration과 평가 Y를 재생성하며, 두 방법·두 alpha에 동일한 평가 Y가 대응하는지 확인한다.
+- 원시 결과의 행 수·key 유일성·길이=상한−하한·집계 count를 확인한다.
+- 같은 r, alpha에서 CP 길이가 grid 전체에 동일한지 확인한다.
+- 동일 표본으로 계산한 95% 구간이 90% 구간을 포함하는지 확인한다.
+- 동일 seed와 설정의 작은 재실행에서 결과가 재현되는지 확인한다.
+- Student-t(df=3)는 두꺼운 꼬리이므로 작은 표본분산이 1과 매우 가깝다는 것을 필수 assertion으로 삼지 않는다.
+- 관측 coverage가 정확히 0.90/0.95이거나 CP≥MC여야 한다는 검증을 넣지 않는다.
+- RF를 재학습한 MC 표본은 일반적으로 단일 정규분포 표본이 아니다. 구간이 `base_prediction ± z*sigma_hat`와 같아야 한다고 검증하지 않는다.
+- 생성한 ipynb는 nbformat 형식과 코드 문법을 확인하고 작은 실행을 수행한다. 수행하지 못한 검증은 그대로 알린다.
+- 최종 보고에는 산출물, 실행 방법, 적용한 기본값, 실제 수행한 검증, full 실행 여부를 명시한다. Smoke 결과를 본 연구 결과로 제시하지 않는다.
