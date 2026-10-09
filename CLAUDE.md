@@ -283,7 +283,7 @@ $$
 | `cv_model` | 3 | fold | CV_FOLDS | 각 fold의 RF 학습 |
 | `cp_calibration` | 4 | r | R=200 | True DGP에서 calibration X·Y 생성 |
 | `mc_dataset` | 5 | r, b | R×B=40,000 | 고정 training X에서 가상 training 오차 생성 |
-| `mc_model` | 6 | r, b | R×B=40,000 | 가상 training으로 RF 재학습 |
+| `mc_training` | 6 | r, b | R×B=40,000 | 가상 training으로 RF 재학습 |
 | `mc_new_error` | 7 | r, b | R×B=40,000 | MC grid 예측에 추가할 Gaussian 오차 생성 |
 | `test_error` | 8 | r | R=200 | True DGP에서 실제 평가용 grid 오차 생성 |
 
@@ -303,7 +303,7 @@ SCENARIO_IDS = {
 STAGE_IDS = {
     'common_dataset': 0, 'common_training': 1,
     'cv_split': 2, 'cv_model': 3, 'cp_calibration': 4,
-    'mc_dataset': 5, 'mc_model': 6,
+    'mc_dataset': 5, 'mc_training': 6,
     'mc_new_error': 7, 'test_error': 8,
 }
 
@@ -317,7 +317,7 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 - **생성기는 `make_random_state` 하나로 통일한다.** 데이터·오차 생성(`uniform`, `normal`, `standard_t`)과 RF·`KFold`의 `random_state` 모두에 사용한다. `Generator`(`make_rng`)는 쓰지 않는다.
 - 통일 이유: 단계마다 생성기 종류를 구분할 필요가 없어 읽기 쉽고, `RandomState`는 NumPy 버전이 달라도 같은 난수를 내도록 보장되어 여러 컴퓨터에서 나눠 실행할 때 안전하다. 시드 재료는 128비트(정수 4개)라 키 간 시드 충돌 걱정이 없다.
 - 같은 `RandomState` 객체를 여러 모델에서 재사용하지 않는다. 각 키에서 새 객체를 만든다.
-- OOB 튜닝의 후보 조합들은 해당 단계의 같은 키를 공유한다(기준 RF는 `common_training`, MC는 `mc_model, r, b`. fold RF는 튜닝 없이 `cv_model, fold=k`로 RF 하나만 학습). 조합마다 같은 키로 새 `RandomState` 객체를 만들어 전달한다. 튜닝 때문에 stage를 추가하지 않는다.
+- OOB 튜닝의 후보 조합들은 해당 단계의 같은 키를 공유한다(기준 RF는 `common_training`, MC는 `mc_training, r, b`. fold RF는 튜닝 없이 `cv_model, fold=k`로 RF 하나만 학습). 조합마다 같은 키로 새 `RandomState` 객체를 만들어 전달한다. 튜닝 때문에 stage를 추가하지 않는다.
 
 ### 9.3 난수 사용과 공유 규칙
 
@@ -326,7 +326,7 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 - CV 분할은 `make_random_state(scenario, 'cv_split')`, 각 fold RF는 `make_random_state(scenario, 'cv_model', fold=k)`를 사용한다. Fold별 random_state를 지정할 수 있도록 명시적 fold 루프를 사용한다.
 - 매 r의 calibration은 `make_random_state(scenario, 'cp_calibration', r=r)`에서 X와 오차를 순서대로 생성한다.
 - 매 (r,b)의 가상 training 오차는 `make_random_state(scenario, 'mc_dataset', r=r, b=b)`에서 길이 N_TRAIN으로 뽑는다. Training X는 재생성하지 않는다.
-- 매 (r,b)의 RF는 `make_random_state(scenario, 'mc_model', r=r, b=b)`로 새로 학습한다.
+- 매 (r,b)의 RF는 `make_random_state(scenario, 'mc_training', r=r, b=b)`로 새로 학습한다.
 - MC 새 관측오차는 `make_random_state(scenario, 'mc_new_error', r=r, b=b)`에서 `normal(0, sigma_hat, size=len(X_grid))`로 한 번에 뽑는다.
 - 실제 평가 오차는 `make_random_state(scenario, 'test_error', r=r)`에서 true DGP에 따라 길이 len(X_grid)로 뽑는다. Gaussian은 표준정규, Student-t는 t_3/sqrt(3)이며 현재 true 표준편차는 1이다.
 - **MC 새 관측오차와 실제 test 오차는 다른 난수 흐름이다.** 전자는 구간 구성, 후자는 포함 여부 평가에만 사용한다.
