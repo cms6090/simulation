@@ -64,14 +64,25 @@ RF_PARAM_GRID = {        # 24개 조합
 
 ### RF Fit 절차 = OOB grid search + 학습
 
-이 연구에서 RF의 `Fit(D)`는 **튜닝을 포함한 절차**이다. 기준 RF, CV fold RF, MC 재학습 RF 모두 같은 Fit을 적용한다.
+이 연구에서 RF의 `Fit(D)`는 **튜닝을 포함한 절차**이다. **기준 RF와 MC 재학습 RF**는 같은 Fit을 적용한다. CV fold RF는 튜닝하지 않고 기준 RF에서 선택한 조합을 고정해 학습한다(§4).
+
+**확정된 방식 조합** (통계적 효율성과 계산 시간을 함께 고려해 사용자가 확정):
+
+| 단계 | 방식 | 이유 |
+| --- | --- | --- |
+| 기준 RF 튜닝 | OOB | MC와 같은 절차여야 하고, 조합 순위 비교에는 OOB로 충분하다. |
+| σ̂² 추정 | CV (기준 RF 조합 고정, 10-fold) | 선택 편향이 작고 비용이 10회 학습뿐이며, `시뮬.md`의 CV 설계를 유지한다. |
+| MC 재학습 튜닝 | OOB | 기준 RF와 같은 절차. 5-fold CV 대비 약 5배 빠르다(전체 계산량의 대부분이 이 단계). |
+
+- 기준 RF와 MC의 튜닝 방식은 반드시 같아야 한다. MC는 f̂를 만든 절차를 가상 데이터에 재현해 그 변동을 반영하므로, 한쪽만 바꾸지 않는다.
+- σ̂²를 기준 RF의 OOB MSE로 대체하지 않는다. 24개 중 최솟값을 고른 값이라 작게 치우친다.
 
 1. `RF_PARAM_GRID`의 모든 조합에 대해 `RF_FIXED_PARAMS`와 합쳐 RF를 데이터 D 전체로 학습한다.
 2. 각 RF의 `oob_prediction_`으로 OOB MSE `mean((y - oob_prediction_)**2)`를 계산한다. sklearn `oob_score_`(R²)는 선택 기준으로 쓰지 않는다.
 3. OOB MSE가 가장 작은 조합을 선택한다. 동률이면 grid 순서상 먼저 나온 조합을 선택한다.
 4. 선택된 조합의 RF가 곧 최종 모델이다(OOB이므로 별도 재학습 없음). 탐색과 최종 모델의 트리 수는 같다.
 
-- OOB 예측이 없는 관측치(NaN)가 생기면 오류를 낸다. 몰래 제외하지 않는다.
+- OOB 예측이 없는 관측치가 생기면 오류를 낸다. 몰래 제외하지 않는다. sklearn은 이 경우 NaN을 주지 않고 예측값을 0으로 채운 뒤 `UserWarning("Some inputs do not have OOB scores...")`만 내므로, `warnings.filterwarnings('error', message='Some inputs do not have OOB scores')`로 이 경고를 오류로 바꾼다.
 - 후보 조합을 하나씩 학습하면서 지금까지 가장 좋은 모델만 메모리에 유지한다.
 - 자동 튜닝 외 추가 튜닝(조합 추가, 결과를 본 grid 변경)을 하지 않는다. grid를 바꾸면 사용자 승인 후 config에 기록한다.
 - 해석상 한계: MC 구간은 튜닝 선택의 변동까지 반영한다. OOB 표본 수는 `max_samples`에 따라 달라진다.
@@ -125,7 +136,8 @@ r_j^{CV}=Y_j^{train}-\widehat f^{(-k(j))}(X_j^{train}),\qquad
 $$
 
 - `KFold(shuffle=True, random_state=...)` 사용. 각 관측값은 자신이 제외된 fold 모델의 예측을 정확히 한 번 받는다.
-- 각 fold 모델 $\widehat f^{(-k)}$도 같은 Fit을 적용한다. 즉 fold의 학습 데이터 안에서만 OOB 튜닝을 다시 한다(nested). 기준 RF에서 고른 조합을 fold 모델에 재사용하지 않는다.
+- 각 fold 모델 $\widehat f^{(-k)}$은 **튜닝하지 않는다.** 기준 RF에서 선택한 조합(`base_params`)을 고정하고, fold의 학습 데이터로 RF 하나만 학습한다(`random_state`는 `cv_model, fold=k`). fold마다 다시 튜닝하는 nested 방식은 쓰지 않는다.
+- 한계: `base_params`는 training 1000개 전체(검증 fold 포함)로 골랐으므로, 조합 선택을 통한 약한 정보 누출로 σ̂²가 아주 약간 작게 나올 수 있다. 조합이 24개뿐이라 영향은 작다고 본다.
 - 분산 추정은 OOF 잔차 전체의 **제곱평균**이다. `np.var(residuals)`나 fold별 RMSE의 평균을 제곱한 값으로 대체하지 않는다.
 - Calibration·grid 평가 반응값을 CV에 사용하지 않는다.
 - 기준 RF를 CV fold 모델로 덮어쓰지 않는다. 최종 기준 RF는 전체 training으로 학습한 모델이다.
@@ -134,6 +146,7 @@ $$
 - 잔차 제곱평균에는 평균함수 추정오차도 포함될 수 있다. 순수 오차분산의 불편추정량이라고 설명하지 않는다.
 - 비유한 추정값은 오류 처리한다. 0이면 퇴화 상태를 명시하고 작은 양수로 몰래 바꾸지 않는다.
 - 진단으로 `sigma2_hat`, pooled CV RMSE, grid의 true mean 대 fitted mean RMSE·MAE를 출력한다. 진단값으로 임의의 통과 기준을 만들지 않는다.
+- 진단으로 기준 RF의 OOB 잔차 제곱평균 `sigma2_oob`를 CV `sigma2_hat` 옆에 출력한다. `sigma2_oob`는 튜닝 선택 편향으로 작게 치우칠 수 있으므로 MC에는 사용하지 않는다(출력·config 기록만).
 
 ## 5. 반복 구조 — 반드시 이 순서와 공유 범위를 유지
 
@@ -304,7 +317,7 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 - **생성기는 `make_random_state` 하나로 통일한다.** 데이터·오차 생성(`uniform`, `normal`, `standard_t`)과 RF·`KFold`의 `random_state` 모두에 사용한다. `Generator`(`make_rng`)는 쓰지 않는다.
 - 통일 이유: 단계마다 생성기 종류를 구분할 필요가 없어 읽기 쉽고, `RandomState`는 NumPy 버전이 달라도 같은 난수를 내도록 보장되어 여러 컴퓨터에서 나눠 실행할 때 안전하다. 시드 재료는 128비트(정수 4개)라 키 간 시드 충돌 걱정이 없다.
 - 같은 `RandomState` 객체를 여러 모델에서 재사용하지 않는다. 각 키에서 새 객체를 만든다.
-- OOB 튜닝의 후보 조합들은 해당 단계의 같은 키를 공유한다(기준 RF는 `common_training`, fold RF는 `cv_model, fold=k`, MC는 `mc_model, r, b`). 조합마다 같은 키로 새 `RandomState` 객체를 만들어 전달한다. 튜닝 때문에 stage를 추가하지 않는다.
+- OOB 튜닝의 후보 조합들은 해당 단계의 같은 키를 공유한다(기준 RF는 `common_training`, MC는 `mc_model, r, b`. fold RF는 튜닝 없이 `cv_model, fold=k`로 RF 하나만 학습). 조합마다 같은 키로 새 `RandomState` 객체를 만들어 전달한다. 튜닝 때문에 stage를 추가하지 않는다.
 
 ### 9.3 난수 사용과 공유 규칙
 
@@ -329,7 +342,7 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 
 - MC 표본을 전부 저장하지 않는다. 각 r에서 B×25 배열만 유지하고 개별 RF는 예측 후 해제한다.
 - 기본은 바깥 루프 순차 실행과 RF 내부 병렬화이다. 바깥 병렬화를 사용하면 RF 내부 `n_jobs=1`로 중첩 병렬화를 피한다.
-- Full MC 선택 모델은 DGP당 B×R=40,000개이고, OOB 튜닝 때문에 후보 RF 학습은 DGP당 40,000×24=960,000회이다. 기준 RF 후보 24회와 CV 후보 CV_FOLDS×24=240회가 별도 추가된다.
+- Full MC 선택 모델은 DGP당 B×R=40,000개이고, OOB 튜닝 때문에 후보 RF 학습은 DGP당 40,000×24=960,000회이다. 기준 RF 후보 24회와 CV fold RF CV_FOLDS=10회가 별도 추가된다.
 - 길이 추가는 모델 학습 횟수나 결과 행 수를 증가시키지 않는다.
 - **Scenario별로 서로 다른 컴퓨터에서 실행한다.** 노트북 설정의 `RUN_SCENARIOS`로 이번 컴퓨터가 실행할 scenario를 고른다. `SCENARIO_IDS`는 바꾸지 않으므로 어느 컴퓨터에서 실행해도 난수 키는 같다.
 - 모든 컴퓨터는 고정된 `requirements.txt`(`pip freeze` 결과)로 같은 라이브러리 버전을 사용하고, `config.json`에 버전과 컴퓨터 정보를 기록한다.
@@ -342,8 +355,8 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 
 | 파일 | 필수 내용 |
 | --- | --- |
-| `config.json` | 설계 버전, 실행 모드, 확정값/구현 기본값 구분, seed·stage 매핑, R·B·n_train·n_cal·grid·alpha, RF 고정 설정·탐색 grid·선택 규칙(OOB MSE, 동률 시 grid 순서), 기준 RF 튜닝표(조합별 OOB MSE), CV folds, sigma2_hat, MC 분위수 방식, 라이브러리 버전, 컴퓨터 정보, 완료 r 목록 |
-| `model_selection.csv` | scenario, stage(`base`/`cv`/`mc`), r, b, fold, min_samples_leaf, max_features, max_samples, oob_mse — 선택된 조합만 기록 (full DGP당 약 40,011행) |
+| `config.json` | 설계 버전, 실행 모드, 확정값/구현 기본값 구분, seed·stage 매핑, R·B·n_train·n_cal·grid·alpha, RF 고정 설정·탐색 grid·선택 규칙(OOB MSE, 동률 시 grid 순서), 기준 RF 튜닝표(조합별 OOB MSE), 확정 방식 조합(튜닝 OOB / σ̂² CV 조합 고정 / MC 튜닝 OOB), CV folds, CV에 고정한 base_params, sigma2_hat, 진단용 sigma2_oob, MC 분위수 방식, 라이브러리 버전, 컴퓨터 정보, 완료 r 목록 |
+| `model_selection.csv` | scenario, stage(`base`/`mc`), r, b, min_samples_leaf, max_features, max_samples, oob_mse — 튜닝으로 선택된 조합만 기록 (full DGP당 40,001행). CV fold RF는 `base_params`를 그대로 쓰므로 기록하지 않는다. |
 | `test_grid.csv` | scenario, grid_id, x1, x2, true_mean, base_prediction |
 | `interval_metrics.csv` | scenario, r, grid_id, x1, x2, alpha, method, y_true, true_mean, lower, upper, covered, length |
 | `point_summary.csv` | scenario, grid_id, x1, x2, alpha, method, n_covered, n_evaluated, coverage, length_mean |
@@ -380,7 +393,7 @@ Full 실행 셀은 사용자가 명시적으로 실행할 수 있게 구성한�
 - 작은 수치 배열로 MC 분위수 축이 B 축인지 확인한다.
 - OOF 예측에서 각 관측값의 학습 제외와 한 번의 예측을 확인한다.
 - 작은 실행에서 MC 선택 모델이 정확히 R×B개, MC 후보 학습이 R×B×조합 수인지 확인한다. 기준 RF·CV 호출과 구분한다.
-- 작은 예제에서 OOB 선택 규칙(최소 OOB MSE, 동률 시 grid 순서)과 OOB 예측 NaN 오류 처리를 확인한다.
+- 작은 예제에서 OOB 선택 규칙(최소 OOB MSE, 동률 시 grid 순서)과 OOB 예측 누락 시 오류 처리(트리 수가 매우 적은 RF로 경고→오류 확인)를 확인한다.
 - 각 r에서 calibration과 평가 Y를 재생성하며, 두 방법·두 alpha에 동일한 평가 Y가 대응하는지 확인한다.
 - 원시 결과의 행 수·key 유일성·길이=상한−하한·집계 count를 확인한다.
 - 같은 r, alpha에서 CP 길이가 grid 전체에 동일한지 확인한다.
