@@ -209,7 +209,7 @@
         <mxCell id="WQHq3jTU1tCi-VXpyFW7-54" parent="zsNqq0IDBKGV7-7x6otk-29" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;b&gt;잔차로 분산 추정&lt;/b&gt;" vertex="1">
           <mxGeometry height="30" width="108" x="66" as="geometry" />
         </mxCell>
-        <mxCell id="WQHq3jTU1tCi-VXpyFW7-55" parent="zsNqq0IDBKGV7-7x6otk-29" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$r_j=Y_j^{train}-\widehat f(\underline X_j^{train}),\qquad r_j \rightarrow \hat \sigma^2$$" vertex="1">
+        <mxCell id="WQHq3jTU1tCi-VXpyFW7-55" parent="zsNqq0IDBKGV7-7x6otk-29" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$r_j=Y_j^{train}-\widehat f^{(-k(j))}(\underline X_j^{train}),\qquad r_j \rightarrow \hat \sigma^2$$" vertex="1">
           <mxGeometry height="30" width="240" y="27" as="geometry" />
         </mxCell>
         <mxCell id="zsNqq0IDBKGV7-7x6otk-30" edge="1" parent="1" source="WQHq3jTU1tCi-VXpyFW7-47" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="WQHq3jTU1tCi-VXpyFW7-54">
@@ -219,7 +219,7 @@
     </mxGraphModel>
   </diagram>
   <diagram name="CP" id="hMgFRnqnSHu9mYW-uq3N">
-    <mxGraphModel grid="0" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="827" pageHeight="1169" math="1" shadow="0">
+    <mxGraphModel dx="817" dy="510" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="1" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -383,9 +383,6 @@
         <mxCell id="Zn5UDBT4eSo5wKkriojz-24" parent="Zn5UDBT4eSo5wKkriojz-26" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$I_{CP,i,r,\alpha}^{grid}=1\{Y_i^{grid,(r)}\in C_{CP,\alpha}^{(r)}(\underline x_i)\}$$" vertex="1">
           <mxGeometry height="30" width="270" x="41" y="37" as="geometry" />
         </mxCell>
-        <mxCell id="Zn5UDBT4eSo5wKkriojz-25" parent="Zn5UDBT4eSo5wKkriojz-26" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$I_{CP,t,r,\alpha}^{test}=1\{Y_t^{test,(r)}\in C_{CP,\alpha}^{(r)}(\underline X_t^{test,(r)})\}$$" vertex="1">
-          <mxGeometry height="30" width="270" x="41" y="74" as="geometry" />
-        </mxCell>
         <mxCell id="Zn5UDBT4eSo5wKkriojz-21" parent="Zn5UDBT4eSo5wKkriojz-26" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$Y$$" vertex="1">
           <mxGeometry height="20" width="46.62" x="123" y="5" as="geometry" />
         </mxCell>
@@ -406,7 +403,7 @@
         <mxCell id="vvf1ByMYXSPuwXrROKnN-59" connectable="0" parent="Zn5UDBT4eSo5wKkriojz-33" style="group" value="" vertex="1">
           <mxGeometry height="81" width="275" x="110" y="605" as="geometry" />
         </mxCell>
-        <mxCell id="Zn5UDBT4eSo5wKkriojz-13" parent="vvf1ByMYXSPuwXrROKnN-59" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;b&gt;4.&amp;nbsp;Grid와 무작위 test의 입력 벡터에서 구간 생성&lt;/b&gt;" vertex="1">
+        <mxCell id="Zn5UDBT4eSo5wKkriojz-13" parent="vvf1ByMYXSPuwXrROKnN-59" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;b&gt;4.&amp;nbsp;Grid의 입력 벡터에서 구간 생성&lt;/b&gt;" vertex="1">
           <mxGeometry height="30" width="254" x="10.5" as="geometry" />
         </mxCell>
         <mxCell id="Zn5UDBT4eSo5wKkriojz-16" parent="vvf1ByMYXSPuwXrROKnN-59" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$C_{CP,\alpha}^{(r)}(\underline x_i)=[\hat f(\underline x_i)-\hat q_\alpha^{(r)},\;\hat f(\underline x_i)+\hat q_\alpha^{(r)}&amp;nbsp;]$$" vertex="1">
@@ -421,15 +418,15 @@
         <mxCell id="83anRtuWLWW3VeKdQSx0-1" parent="vvf1ByMYXSPuwXrROKnN-58" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;span style=&quot;color: rgb(128, 128, 128); text-align: left;&quot;&gt;$$\underline x_i$$&amp;nbsp;&lt;/span&gt;" vertex="1">
           <mxGeometry height="30" width="60" x="96.38" y="6" as="geometry" />
         </mxCell>
-        <mxCell id="Zn5UDBT4eSo5wKkriojz-34" edge="1" parent="1" source="Zn5UDBT4eSo5wKkriojz-25" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;strokeColor=#808080;fontColor=#808080;" value="">
-          <mxGeometry height="50" relative="1" width="50" as="geometry">
+        <mxCell id="Zn5UDBT4eSo5wKkriojz-34" edge="1" parent="1" source="Zn5UDBT4eSo5wKkriojz-24" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;strokeColor=#808080;fontColor=#808080;" value="">
+          <mxGeometry height="50" relative="1" width="50" x="-0.0182" as="geometry">
             <Array as="points">
-              <mxPoint x="461.62" y="1073.8200000000002" />
-              <mxPoint x="50.86" y="1076.19" />
+              <mxPoint x="463.6" y="1037" />
+              <mxPoint x="50.86" y="1039.08" />
               <mxPoint x="50.86" y="93" />
               <mxPoint x="461.62" y="93" />
             </Array>
-            <mxPoint x="317.62" y="589" as="sourcePoint" />
+            <mxPoint x="462" y="1011" as="sourcePoint" />
             <mxPoint x="461.62" y="137" as="targetPoint" />
           </mxGeometry>
         </mxCell>
@@ -777,32 +774,26 @@
         <mxCell id="AfToCAxNCLRICshrcyAf-28" parent="Ky-j830P7OmHwt2IuUx7-0" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;fontStyle=1" value="3. 같은 모델 200개로 모든 test 입력 벡터에서 예측" vertex="1">
           <mxGeometry height="30" width="260" as="geometry" />
         </mxCell>
-        <mxCell id="AfToCAxNCLRICshrcyAf-29" parent="Ky-j830P7OmHwt2IuUx7-0" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;span style=&quot;color: rgb(128, 128, 128);&quot;&gt;Grid 25개 + 무작위 test 1,000개&lt;/span&gt;" vertex="1">
+        <mxCell id="AfToCAxNCLRICshrcyAf-29" parent="Ky-j830P7OmHwt2IuUx7-0" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;span style=&quot;color: rgb(128, 128, 128);&quot;&gt;Grid 25개&lt;/span&gt;" vertex="1">
           <mxGeometry height="30" width="167" x="46" y="22" as="geometry" />
         </mxCell>
-        <mxCell id="T-h9-t4ljnVx10fi4x8B-3" connectable="0" parent="u3BV1lUZVD-W9QnplfFD-1" style="group" value="" vertex="1">
-          <mxGeometry height="94" width="416" x="204" y="956" as="geometry" />
+        <mxCell id="7tL4tBRslC79oS1XMcbb-1" parent="u3BV1lUZVD-W9QnplfFD-1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;span style=&quot;color: rgb(128, 128, 128);&quot;&gt;Grid의 포함 여부&lt;/span&gt;" vertex="1">
+          <mxGeometry height="30" width="120" x="352" y="985" as="geometry" />
         </mxCell>
-        <mxCell id="7tL4tBRslC79oS1XMcbb-1" parent="T-h9-t4ljnVx10fi4x8B-3" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;span style=&quot;color: rgb(128, 128, 128);&quot;&gt;Grid의 포함 여부&lt;/span&gt;" vertex="1">
-          <mxGeometry height="30" width="120" x="148" y="29" as="geometry" />
+        <mxCell id="7tL4tBRslC79oS1XMcbb-3" parent="u3BV1lUZVD-W9QnplfFD-1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$I_{MC,i,r,\alpha}^{grid}=1\{Y_i^{grid,(r)}\in C_{MC,\alpha}^{(r)}(\underline x_i)\}$$" vertex="1">
+          <mxGeometry height="30" width="275" x="274.5" y="1014" as="geometry" />
         </mxCell>
-        <mxCell id="7tL4tBRslC79oS1XMcbb-3" parent="T-h9-t4ljnVx10fi4x8B-3" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$I_{MC,i,r,\alpha}^{grid}=1\{Y_i^{grid,(r)}\in C_{MC,\alpha}^{(r)}(\underline x_i)\}$$" vertex="1">
-          <mxGeometry height="30" width="275" x="70.5" y="58" as="geometry" />
+        <mxCell id="opK5OZxJwGvh1B7Sza90-0" parent="u3BV1lUZVD-W9QnplfFD-1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;b&gt;6. 실제 test&amp;nbsp; &amp;nbsp; &amp;nbsp;의 포함 여부를 각각 기록 → grid 집계는 다음 페이지&lt;/b&gt;" vertex="1">
+          <mxGeometry height="30" width="416" x="205" y="955" as="geometry" />
         </mxCell>
-        <mxCell id="T-h9-t4ljnVx10fi4x8B-2" connectable="0" parent="T-h9-t4ljnVx10fi4x8B-3" style="group" value="" vertex="1">
-          <mxGeometry height="30" width="416" as="geometry" />
-        </mxCell>
-        <mxCell id="opK5OZxJwGvh1B7Sza90-1" parent="T-h9-t4ljnVx10fi4x8B-2" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$Y$$" vertex="1">
-          <mxGeometry height="30" width="60" x="48" as="geometry" />
-        </mxCell>
-        <mxCell id="opK5OZxJwGvh1B7Sza90-0" parent="T-h9-t4ljnVx10fi4x8B-2" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;b&gt;6. 실제 test&amp;nbsp; &amp;nbsp; &amp;nbsp;의 포함 여부를 각각 기록 → grid · marginal 집계는 다음 페이지&lt;/b&gt;" vertex="1">
-          <mxGeometry height="30" width="416" as="geometry" />
+        <mxCell id="EGvL-16_m8a_LgOdpx6O-0" parent="u3BV1lUZVD-W9QnplfFD-1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="$$Y$$" vertex="1">
+          <mxGeometry height="30" width="60" x="283" y="955" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
   <diagram name="평가 파트" id="L73sVV6mmM_PrLtTaKOs">
-    <mxGraphModel dx="2357" dy="1472" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="1" shadow="0">
+    <mxGraphModel dx="982" dy="613" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="1" shadow="0">
       <root>
         <mxCell id="j9n0n_9hN4uj2ON9aSnW-0" />
         <mxCell id="j9n0n_9hN4uj2ON9aSnW-1" parent="j9n0n_9hN4uj2ON9aSnW-0" />
@@ -971,7 +962,7 @@
         <mxCell id="m6XQ3vK1-sSN_dm2YsHz-18" connectable="0" parent="c3JnV59Xuu_ezbuJTJd1-3" style="group" value="" vertex="1">
           <mxGeometry height="77.83536585365853" width="535" y="957.1646341463414" as="geometry" />
         </mxCell>
-        <mxCell id="7kvZG97cEjSTpRRYPxQG-121" parent="m6XQ3vK1-sSN_dm2YsHz-18" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;div&gt;&lt;div&gt;&lt;span style=&quot;color: rgb(128, 128, 128);&quot;&gt;Training은 고정 / CP의 marginal 평가도 calibration과 test를 함께 반복&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;" vertex="1">
+        <mxCell id="7kvZG97cEjSTpRRYPxQG-121" parent="m6XQ3vK1-sSN_dm2YsHz-18" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;div&gt;&lt;div&gt;&lt;span style=&quot;color: rgb(128, 128, 128);&quot;&gt;Training은 고정 / calibration과 평가 Y는 매 반복 새로 생성&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;" vertex="1">
           <mxGeometry height="54.695121951219505" width="535" y="23.140243902439025" as="geometry" />
         </mxCell>
         <mxCell id="m6XQ3vK1-sSN_dm2YsHz-16" parent="m6XQ3vK1-sSN_dm2YsHz-18" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;br&gt;&lt;div&gt;&lt;span style=&quot;color: rgb(128, 128, 128);&quot;&gt;$$h\in\{MC,\; CP\}$$&lt;/span&gt;&lt;/div&gt;" vertex="1">
