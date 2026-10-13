@@ -17,6 +17,7 @@ Python Jupyter Notebook `notebooks/MC_CP_simulation.ipynb`를 작성한다. 설�
 - 노트북은 `notebooks/`에 둔다. 실행 위치(작업 디렉터리)와 무관하게 프로젝트 루트를 찾아 결과 경로를 지정한다. 예: 현재 디렉터리 또는 상위 디렉터리 중 `시뮬.md`가 있는 곳을 `PROJECT_ROOT`로 사용하고, 찾지 못하면 오류를 낸다.
 - 이번 산출물은 노트북과 실행에 필요한 간단한 의존성 목록이다. 구현 후 작은 smoke 실행으로 검증하고, 실행한 범위를 정확하게 보고한다.
 - **노트북은 구현·확인용이다.** 한 scenario(`linear_homo_gaussian`)를 따라가며 계산·저장 형식을 확인한다. 실제 full 실행은 노트북을 바탕으로 별도 `.py`로 만든다. scenario 일반화(`RUN_SCENARIOS`), r 단위 저장·재개, 따라가기 셀 제외, 4개 scenario smoke 실행, 버전 고정·백그라운드 실행 준비는 `.py`에서 한다. 노트북은 실행할 때마다 `results/smoke/<scenario>/`를 덮어쓴다.
+- (2026-10-12 현재) 실제 실행 파일은 루트의 `run_simulation.py`이며, 계산 코드를 고칠 때는 이 파일이 기준이다. `notebooks/simulation.ipynb`는 같은 계산의 노트북 버전(이해·결과표용)이므로 계산을 바꾸면 함께 맞춘다. `notebooks/MC_CP_simulation.ipynb`는 따라가기·검증용이며 결과는 `results/check/`에 저장한다. scenario와 mode는 명령줄이 아니라 파일 위쪽 `SCENARIOS`, `RUN_MODE`를 직접 고친다. 계산 코드를 바꾸면 `results/`를 지우고 처음부터 다시 돌린다(계산 버전 이름표는 쓰지 않는다).
 
 ## 2. 확정 설계와 구현 기본값
 
