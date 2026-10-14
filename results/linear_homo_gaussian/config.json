@@ -1,0 +1,531 @@
+{
+  "design_doc": "시뮬.md",
+  "scenario": "linear_homo_gaussian",
+  "run_mode": "full",
+  "run_settings": {
+    "run_mode": "full",
+    "R": 200,
+    "B": 200,
+    "n_trees": 1000,
+    "n_train": 1000,
+    "n_cal": 1000,
+    "grid_axis": [
+      -1.0,
+      -0.5,
+      0.0,
+      0.5,
+      1.0
+    ],
+    "alphas": [
+      0.1,
+      0.05
+    ],
+    "master_seed": 0,
+    "scenario_ids": {
+      "linear_homo_gaussian": 0,
+      "linear_homo_student_t": 1,
+      "nonlinear_homo_gaussian": 2,
+      "nonlinear_homo_student_t": 3
+    },
+    "stage_ids": {
+      "common_dataset": 0,
+      "common_training": 1,
+      "cv_split": 2,
+      "cv_model": 3,
+      "cp_calibration": 4,
+      "mc_dataset": 5,
+      "mc_training": 6,
+      "mc_new_error": 7,
+      "test_error": 8
+    },
+    "cv_folds": 10,
+    "mc_quantile_method": "linear",
+    "max_depth": null,
+    "grid_min_samples_leaf": [
+      5,
+      10,
+      20,
+      40
+    ],
+    "grid_max_features": [
+      0.5,
+      1.0
+    ],
+    "grid_max_samples": [
+      0.5,
+      0.7,
+      1.0
+    ],
+    "python": "3.13.15",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "scikit-learn": "1.9.1"
+  },
+  "design": {
+    "n_train": 1000,
+    "n_cal": 1000,
+    "grid_axis": [
+      -1.0,
+      -0.5,
+      0.0,
+      0.5,
+      1.0
+    ],
+    "n_grid": 25,
+    "alphas": [
+      0.1,
+      0.05
+    ],
+    "R_full": 200,
+    "B_full": 200,
+    "variance_estimator": "cv",
+    "mc_error_family": "gaussian"
+  },
+  "run_size": {
+    "R": 200,
+    "B": 200,
+    "n_trees": 1000
+  },
+  "implementation_defaults": {
+    "master_seed": 0,
+    "cv_folds": 10,
+    "mc_quantile_method": "linear",
+    "n_trees_full": 1000,
+    "rf_fixed": {
+      "max_depth": null,
+      "bootstrap": true,
+      "oob_score": true,
+      "predict_n_jobs": 1
+    },
+    "rf_train_n_jobs": "기준 RF·CV fold RF는 -1, MC 재학습 RF는 1 (b를 N_WORKERS개 동시에 계산). RF 결과는 n_jobs와 무관",
+    "n_workers": 32,
+    "rf_param_grid": {
+      "min_samples_leaf": [
+        5,
+        10,
+        20,
+        40
+      ],
+      "max_features": [
+        0.5,
+        1.0
+      ],
+      "max_samples": [
+        0.5,
+        0.7,
+        1.0
+      ]
+    },
+    "selection_rule": "OOB MSE = mean((y - oob_prediction_)^2) 최소, 동률이면 grid 순서상 먼저 나온 조합"
+  },
+  "method_choice": {
+    "base_rf_tuning": "OOB",
+    "sigma2_estimation": "CV, 기준 RF 조합 고정 (fold 안에서 다시 튜닝하지 않음)",
+    "mc_rf_tuning": "OOB (가상 데이터마다 다시 튜닝)"
+  },
+  "base_rf": {
+    "best_params": {
+      "min_samples_leaf": 10,
+      "max_features": 0.5,
+      "max_samples": 0.5
+    },
+    "oob_table": [
+      {
+        "min_samples_leaf": 5,
+        "max_features": 0.5,
+        "max_samples": 0.5,
+        "oob_mse": 1.0462245803469272
+      },
+      {
+        "min_samples_leaf": 5,
+        "max_features": 0.5,
+        "max_samples": 0.7,
+        "oob_mse": 1.051697369825317
+      },
+      {
+        "min_samples_leaf": 5,
+        "max_features": 0.5,
+        "max_samples": 1.0,
+        "oob_mse": 1.0659720653748403
+      },
+      {
+        "min_samples_leaf": 5,
+        "max_features": 1.0,
+        "max_samples": 0.5,
+        "oob_mse": 1.0547662921397063
+      },
+      {
+        "min_samples_leaf": 5,
+        "max_features": 1.0,
+        "max_samples": 0.7,
+        "oob_mse": 1.0642398326566511
+      },
+      {
+        "min_samples_leaf": 5,
+        "max_features": 1.0,
+        "max_samples": 1.0,
+        "oob_mse": 1.0819429786603059
+      },
+      {
+        "min_samples_leaf": 10,
+        "max_features": 0.5,
+        "max_samples": 0.5,
+        "oob_mse": 1.0411429986681116
+      },
+      {
+        "min_samples_leaf": 10,
+        "max_features": 0.5,
+        "max_samples": 0.7,
+        "oob_mse": 1.0437068825192723
+      },
+      {
+        "min_samples_leaf": 10,
+        "max_features": 0.5,
+        "max_samples": 1.0,
+        "oob_mse": 1.0483565717538685
+      },
+      {
+        "min_samples_leaf": 10,
+        "max_features": 1.0,
+        "max_samples": 0.5,
+        "oob_mse": 1.0464902525035942
+      },
+      {
+        "min_samples_leaf": 10,
+        "max_features": 1.0,
+        "max_samples": 0.7,
+        "oob_mse": 1.0509582421168282
+      },
+      {
+        "min_samples_leaf": 10,
+        "max_features": 1.0,
+        "max_samples": 1.0,
+        "oob_mse": 1.0572558878956488
+      },
+      {
+        "min_samples_leaf": 20,
+        "max_features": 0.5,
+        "max_samples": 0.5,
+        "oob_mse": 1.0484776427619171
+      },
+      {
+        "min_samples_leaf": 20,
+        "max_features": 0.5,
+        "max_samples": 0.7,
+        "oob_mse": 1.0448725579642841
+      },
+      {
+        "min_samples_leaf": 20,
+        "max_features": 0.5,
+        "max_samples": 1.0,
+        "oob_mse": 1.0456254109044016
+      },
+      {
+        "min_samples_leaf": 20,
+        "max_features": 1.0,
+        "max_samples": 0.5,
+        "oob_mse": 1.046815515014548
+      },
+      {
+        "min_samples_leaf": 20,
+        "max_features": 1.0,
+        "max_samples": 0.7,
+        "oob_mse": 1.047301537854425
+      },
+      {
+        "min_samples_leaf": 20,
+        "max_features": 1.0,
+        "max_samples": 1.0,
+        "oob_mse": 1.0495755765889458
+      },
+      {
+        "min_samples_leaf": 40,
+        "max_features": 0.5,
+        "max_samples": 0.5,
+        "oob_mse": 1.0783849240095544
+      },
+      {
+        "min_samples_leaf": 40,
+        "max_features": 0.5,
+        "max_samples": 0.7,
+        "oob_mse": 1.0689475709876852
+      },
+      {
+        "min_samples_leaf": 40,
+        "max_features": 0.5,
+        "max_samples": 1.0,
+        "oob_mse": 1.0617030464620825
+      },
+      {
+        "min_samples_leaf": 40,
+        "max_features": 1.0,
+        "max_samples": 0.5,
+        "oob_mse": 1.0730457866669962
+      },
+      {
+        "min_samples_leaf": 40,
+        "max_features": 1.0,
+        "max_samples": 0.7,
+        "oob_mse": 1.0654917052280468
+      },
+      {
+        "min_samples_leaf": 40,
+        "max_features": 1.0,
+        "max_samples": 1.0,
+        "oob_mse": 1.058798635080607
+      }
+    ]
+  },
+  "sigma2_hat": 1.0448198193259333,
+  "sigma2_oob_diagnostic": 1.0411429986681116,
+  "diagnostics": {
+    "pooled_cv_rmse": 1.0221642819654448,
+    "grid_rmse_base_vs_true_mean": 0.17495818694231338,
+    "grid_mae_base_vs_true_mean": 0.13456871513714488
+  },
+  "rng": {
+    "master_seed": 0,
+    "scenario_ids": {
+      "linear_homo_gaussian": 0,
+      "linear_homo_student_t": 1,
+      "nonlinear_homo_gaussian": 2,
+      "nonlinear_homo_student_t": 3
+    },
+    "stage_ids": {
+      "common_dataset": 0,
+      "common_training": 1,
+      "cv_split": 2,
+      "cv_model": 3,
+      "cp_calibration": 4,
+      "mc_dataset": 5,
+      "mc_training": 6,
+      "mc_new_error": 7,
+      "test_error": 8
+    },
+    "key_order": [
+      "MASTER_SEED",
+      "scenario_id",
+      "stage_id",
+      "r",
+      "b",
+      "fold"
+    ],
+    "index_rules": "r=1..R, b=1..B, fold=1..CV_FOLDS; 해당 단계에 필요 없는 인덱스는 0",
+    "generator": "np.random.RandomState(np.random.SeedSequence(key).generate_state(4)); 부를 때마다 새 객체"
+  },
+  "index_ranges": "r=1..R, grid_id=0..24 (x1 바깥 루프, x2 안쪽 루프), method=mc/cp",
+  "library_versions": {
+    "python": "3.13.15",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "scikit-learn": "1.9.1"
+  },
+  "machine": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "AMD64 Family 23 Model 1 Stepping 1, AuthenticAMD",
+    "cpu_count": 32
+  },
+  "completed_r": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    128,
+    129,
+    130,
+    131,
+    132,
+    133,
+    134,
+    135,
+    136,
+    137,
+    138,
+    139,
+    140,
+    141,
+    142,
+    143,
+    144,
+    145,
+    146,
+    147,
+    148,
+    149,
+    150,
+    151,
+    152,
+    153,
+    154,
+    155,
+    156,
+    157,
+    158,
+    159,
+    160,
+    161,
+    162,
+    163,
+    164,
+    165,
+    166,
+    167,
+    168,
+    169,
+    170,
+    171,
+    172,
+    173,
+    174,
+    175,
+    176,
+    177,
+    178,
+    179,
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    186,
+    187,
+    188,
+    189,
+    190,
+    191,
+    192,
+    193,
+    194,
+    195,
+    196,
+    197,
+    198,
+    199,
+    200
+  ],
+  "is_complete": true
+}
