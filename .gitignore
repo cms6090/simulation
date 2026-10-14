@@ -1,7 +1,7 @@
 venv/
 venv
-results/
-results
+results/smoke/
+results/*/r_results/
 .ipynb_checkpoints/
 __pycache__/
 __pycache__
