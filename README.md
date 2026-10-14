@@ -127,6 +127,7 @@ venv\Scripts\python run_simulation.py > results\run_log.txt 2>&1
   - 안 붙이면 (`venv\Scripts\python run_simulation.py`): 출력이 cmd 창에만 나오고, 창을 닫으면 기록이 사라진다.
   - 같은 파일 이름으로 다시 실행하면 이전 로그를 덮어쓴다. 남기려면 이름을 바꾼다 (예: `run_log_2.txt`).
 - 실행 중에는 **절전 모드를 끈다** (절전에 들어가면 계산이 멈춘다).
+- MC의 b는 `N_WORKERS`(= 그 컴퓨터의 논리 코어 수)개씩 동시에 계산한다. 실행 중에는 CPU를 거의 모두 쓴다. 동시에 계산하는 수는 결과에 영향이 없다 (순서대로 하나씩 계산한 것과 비트 단위로 같음).
 - 진행 상황은 로그의 `r=○/200 완료` 줄이나 `results/<scenario>/config.json`의 `completed_r`로 확인한다.
 
 ### 중간에 멈췄을 때
@@ -139,7 +140,8 @@ venv\Scripts\python run_simulation.py > results\run_log.txt 2>&1
 
 ## 4. full 소요 시간 측정 (본 실행 전, 컴퓨터마다)
 
-full은 r 하나에 RF를 B × 24 = 4,800개 학습하므로, 짧게 돌려 전체 시간을 추정한다.
+full은 r 하나에 RF를 B × 24 = 4,800개 학습하므로, r 하나만 돌려 전체 시간을 추정한다.
+b를 코어 수만큼 동시에 계산하므로 B를 줄여서 재면 안 된다 (b 20개는 한 번에 끝나 시간이 B에 비례하지 않는다). **B는 200 그대로 두고 R만 1로** 줄인다.
 
 1. `run_simulation.py`를 임시로 고친다.
    ```python
@@ -148,7 +150,7 @@ full은 r 하나에 RF를 B × 24 = 4,800개 학습하므로, 짧게 돌려 전�
    ...
    elif RUN_MODE == 'full':
        R = 1        # 시간 측정용 (원래 200)
-       B = 10       # 시간 측정용 (원래 200)
+       B = 200
        N_TREES = 1000
    ```
 2. 실행한다.
@@ -156,18 +158,15 @@ full은 r 하나에 RF를 B × 24 = 4,800개 학습하므로, 짧게 돌려 전�
    venv\Scripts\python run_simulation.py > results\time_test.txt 2>&1
    ```
 3. `results\time_test.txt`에서 두 값을 읽는다.
-   - **T_r** = `r=1/1 완료 (○○초)`의 ○○ (r 하나, b 10개)
+   - **T_r** = `r=1/1 완료 (○○초)`의 ○○ (full의 r 하나)
    - **T_base** = (r=1 완료 시각 − T_r) − scenario 시작 시각 (기준 RF와 CV, scenario마다 한 번)
-4. 계산한다. r 하나의 시간은 거의 전부 b 반복이라 B에 비례한다.
+4. 계산한다.
    ```
-   b 하나            = T_r / 10
-   full의 r 하나      = 20 × T_r
-   full scenario 하나 = T_base + 4,000 × T_r
+   full scenario 하나 = T_base + 200 × T_r
    ```
-   예: T_r = 300초, T_base = 200초 → scenario 하나 ≈ 1,200,200초 ≈ 13.9일.
-   r 시간에 B와 무관한 부분(CP, 저장)이 몇 초 섞여 있어 추정은 약간 길게 나온다.
+   예: T_r = 420초, T_base = 45초 → scenario 하나 ≈ 84,045초 ≈ 23시간.
 5. **되돌린다.**
-   - 코드: `R = 200`, `B = 200`, `SCENARIOS`, `RUN_MODE`를 원래대로
+   - 코드: `R = 200`, `SCENARIOS`, `RUN_MODE`를 원래대로
    - 폴더: `results\linear_homo_gaussian` 삭제 (R=1 설정이 저장되어 있어, 남아 있으면 본 실행이 설정 불일치로 멈춘다)
 
 ## 5. 결과 보기
