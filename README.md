@@ -26,14 +26,21 @@ $$
 
 ### 진행 순서 (scenario 하나 기준)
 
-**공통 준비 (한 번, 이후 고정)**
+**하이퍼파라미터 선택 (4개 scenario 공통, 한 번)** — 2026-10-15 랩미팅에서 교수님 지침으로 변경
+
+1. `linear_homo_gaussian`의 training으로 24개 조합(`min_samples_leaf` × `max_features` × `max_samples`) RF를 각각 학습
+2. 학습에 쓰지 않은 새 X 1,000개에서 참평균과의 RMSE $\sqrt{\text{mean}(\widehat f(x)-m(x))^2}$ 계산 → 가장 작은 조합 선택 (동률이면 grid 순서상 먼저)
+3. 선택한 조합의 $m(x)$ 대 $\widehat f(x)$ 그래프(`hparam_check.png`)가 $y=x$ 꼴인지 확인
+4. 이 조합을 4개 scenario의 기준 RF와 모든 MC 재학습 RF에 고정 (MC에서 다시 튜닝하지 않음)
+
+**공통 준비 (scenario마다 한 번, 이후 고정)**
 
 1. True DGP에서 training 1,000행 생성
-2. 기준 RF $\widehat f$ 학습 : 하이퍼파라미터 24개 조합(`min_samples_leaf` × `max_features` × `max_samples`)을 모두 학습하고 OOB MSE가 가장 작은 RF 선택
-3. 잔차분산 $\widehat\sigma^2$ : 10-fold CV(기준 RF의 조합 고정)의 out-of-fold 잔차 제곱평균
+2. 기준 RF $\widehat f$ 학습 : 고정 조합으로 RF 하나
+3. 잔차분산 $\widehat\sigma^2$ : 기준 RF의 OOB 잔차 제곱평균 $\text{mean}(Y_j-\widehat f^{OOB}(X_j))^2$
 4. Grid 25개 : 두 축 $\{-1,-0.5,0,0.5,1\}$의 모든 조합 $\underline x_i$
 
-→ training, $\widehat f$, $\widehat\sigma^2$, grid 위치는 모든 반복에서 고정
+→ 하이퍼파라미터, training, $\widehat f$, $\widehat\sigma^2$, grid 위치는 모든 반복에서 고정
 
 **반복 $r=1,\dots,R$ ($R=200$)**
 
@@ -41,7 +48,7 @@ $$
 2. **CP** : 새 calibration 1,000행 생성 → score $S_a=|Y_a-\widehat f(X_a)|$ → 정렬해서 $k_\alpha=\lceil(n_{cal}+1)(1-\alpha)\rceil$번째 값 $\widehat q_\alpha$ (90%: 901번째, 95%: 951번째) → 구간 $\widehat f(\underline x_i)\pm\widehat q_\alpha$
 3. **MC** : $b=1,\dots,B$ ($B=200$)마다
    - 가상 training $Y_j^{*}=\widehat f(X_j^{train})+N(0,\widehat\sigma^2)$ (입력은 원래 training 그대로)
-   - 가상 데이터로 RF를 **기준 RF와 같은 OOB 튜닝 절차로 새로 학습**
+   - 가상 데이터로 RF를 **고정 조합으로 새로 학습** (다시 튜닝하지 않음)
    - grid 25곳 예측값에 새 관측오차 $N(0,\widehat\sigma^2)$를 더함
 
    → grid마다 가상 반응값 $B$개의 $\alpha/2$, $1-\alpha/2$ 분위수로 구간
@@ -61,13 +68,15 @@ grid × $\alpha$ × 방법마다 coverage와 평균 길이를 계산하고, 같�
 - 목표 coverage(0.90, 0.95)와의 차이를 먼저 보고, 그다음 길이를 본다. Coverage가 부족한데 길이가 짧은 것을 더 좋은 방법으로 보지 않는다.
 - Split CP는 marginal coverage를 보장하지만, 모든 입력에서 conditional coverage를 보장하지는 않는다.
 - MC의 가상 오차는 모든 scenario에서 Gaussian이다. Student-t scenario에서는 참 오차분포와의 차이가 결과에 반영될 수 있다.
-- $\widehat\sigma^2$에는 평균함수 추정오차도 섞여 있어 순수 오차분산의 불편추정량이 아니다.
+- $\widehat\sigma^2$(OOB 잔차 제곱평균)에는 평균함수 추정오차도 섞여 있어 순수 오차분산의 불편추정량이 아니다.
+- 하이퍼파라미터를 고정하므로 MC 구간은 튜닝 선택의 변동을 반영하지 않는다. 조합은 `linear_homo_gaussian`에서 골랐으므로 다른 scenario에서는 최적이 아닐 수 있다.
 
 ### 계산량 (scenario 하나, full)
 
 | 항목 | 수 |
 | --- | --- |
-| MC 재학습 모델 | $R\times B$ = 40,000개 (튜닝 후보까지 RF 960,000번 학습) |
+| MC 재학습 모델 | $R\times B$ = 40,000개 (튜닝 없음) |
+| 하이퍼파라미터 선택 | 24개 조합 학습 (`linear_homo_gaussian`, 한 번) |
 | 원시 결과 (`interval_metrics.csv`) | 25 grid × 2 $\alpha$ × 2 방법 × 200 = 20,000행 |
 | 입력별 요약 (`point_summary.csv`) | 100행 |
 
@@ -113,6 +122,7 @@ RUN_MODE = 'full'                  # 'smoke' 또는 'full'
 
 - 가능한 scenario: `linear_homo_gaussian`, `linear_homo_student_t`, `nonlinear_homo_gaussian`, `nonlinear_homo_student_t`
 - full을 여러 컴퓨터에 나눠 돌릴 때는 컴퓨터마다 `SCENARIOS`에 하나씩 넣는다. scenario ID가 고정이라 어느 컴퓨터에서 돌려도 같은 난수를 쓴다.
+- 하이퍼파라미터 선택(`linear_homo_gaussian`의 24개 조합)은 `SCENARIOS`와 상관없이 모든 컴퓨터에서 실행 시작 때 돌린다. 같은 난수 키를 쓰므로 어느 컴퓨터에서나 같은 조합이 나온다. 트리 수는 그 실행 모드의 값을 쓴다.
 
 ## 3. 실행
 
@@ -134,13 +144,13 @@ venv\Scripts\python run_simulation.py > results\run_log.txt 2>&1
 
 **같은 명령으로 다시 실행한다.** r 하나가 끝날 때마다 `r_results/`에 저장하므로, 완료된 r은 건너뛰고 이어서 계산한다 (잃는 것은 진행 중이던 r 하나).
 
-- 다시 실행하면 저장된 설정과 지금 설정, 기준 RF 조합, σ̂²를 비교하고, 다르면 오류로 멈춘다. 기존 결과는 지우지 않는다.
+- 다시 실행하면 저장된 설정과 지금 설정, 선택된 하이퍼파라미터 조합, σ̂²를 비교하고, 다르면 오류로 멈춘다. 기존 결과는 지우지 않는다.
 - 요약 파일(`interval_metrics.csv`, `point_summary.csv` 등)은 **R개 r이 모두 끝난 뒤에만** 만들어진다. 미완료 상태에서는 `r_results/`와 `config.json`만 있다.
 - **계산 코드를 바꾸면 해당 `results/` 폴더를 지우고 처음부터 다시 돌린다.** 재개 검사는 설정값만 비교하므로 코드 변경은 잡지 못한다.
 
 ## 4. full 소요 시간 측정 (본 실행 전, 컴퓨터마다)
 
-full은 r 하나에 RF를 B × 24 = 4,800개 학습하므로, r 하나만 돌려 전체 시간을 추정한다.
+full은 r 하나에 RF를 B = 200개 학습하므로, r 하나만 돌려 전체 시간을 추정한다.
 b를 코어 수만큼 동시에 계산하므로 B를 줄여서 재면 안 된다 (b 20개는 한 번에 끝나 시간이 B에 비례하지 않는다). **B는 200 그대로 두고 R만 1로** 줄인다.
 
 1. `run_simulation.py`를 임시로 고친다.
@@ -159,12 +169,12 @@ b를 코어 수만큼 동시에 계산하므로 B를 줄여서 재면 안 된다
    ```
 3. `results\time_test.txt`에서 두 값을 읽는다.
    - **T_r** = `r=1/1 완료 (○○초)`의 ○○ (full의 r 하나)
-   - **T_base** = (r=1 완료 시각 − T_r) − scenario 시작 시각 (기준 RF와 CV, scenario마다 한 번)
+   - **T_base** = (r=1 완료 시각 − T_r) − 실행 시작 시각 (하이퍼파라미터 선택 24개 조합 + 기준 RF, 실행마다 한 번)
 4. 계산한다.
    ```
    full scenario 하나 = T_base + 200 × T_r
    ```
-   예: T_r = 420초, T_base = 45초 → scenario 하나 ≈ 84,045초 ≈ 23시간.
+   계산 예시 (실측값 아님): T_r = 20초, T_base = 60초 → scenario 하나 ≈ 4,060초 ≈ 1.1시간.
 5. **되돌린다.**
    - 코드: `R = 200`, `SCENARIOS`, `RUN_MODE`를 원래대로
    - 폴더: `results\linear_homo_gaussian` 삭제 (R=1 설정이 저장되어 있어, 남아 있으면 본 실행이 설정 불일치로 멈춘다)
@@ -177,10 +187,10 @@ b를 코어 수만큼 동시에 계산하므로 B를 줄여서 재면 안 된다
 
 | 결과 파일 | 내용 |
 | --- | --- |
-| `config.json` | 설정, 기준 RF 튜닝표, σ̂², 진단값, 난수 정책, 라이브러리 버전, 컴퓨터 정보, 완료 r 목록 |
-| `r_results/interval_rXXX.csv`, `selection_rXXX.csv` | r 하나의 채점 결과(100행)와 MC 선택 조합(B행) |
+| `config.json` | 설정, 하이퍼파라미터 선택 결과(24개 조합 RMSE 표, 선택 조합), σ̂², 진단값, 난수 정책, 라이브러리 버전, 컴퓨터 정보, 완료 r 목록 |
+| `hparam_check.png` | 선택 조합의 $m(x)$ 대 $\widehat f(x)$ 그래프 ($y=x$ 꼴 확인용) |
+| `r_results/interval_rXXX.csv` | r 하나의 채점 결과(100행) |
 | `test_grid.csv` | grid 25개의 좌표, 참평균, 기준 RF 예측 |
 | `interval_metrics.csv` | r × grid × alpha × method별 구간, 포함 여부, 길이 |
-| `model_selection.csv` | 기준 RF 1행 + MC 선택 조합 R×B행 |
 | `point_summary.csv` | grid × alpha × method별 coverage, 평균 길이, 길이 표준편차 |
 | `method_comparison.csv` | grid × alpha별 MC·CP 나란히, CP − MC 차이 |

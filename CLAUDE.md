@@ -10,7 +10,7 @@ Python Jupyter Notebook `notebooks/MC_CP_simulation.ipynb`를 작성한다. 설�
 - 주 구현은 노트북에서 이해할 수 있게 작성한다. 불필요한 클래스·프레임워크·여러 모듈로 분산하지 않는다.
 - **코드는 사람이 순서대로 짜듯 작성한다.**
   - 노트북은 생성 스크립트로 한 번에 찍어내지 않는다. 셀을 하나씩 추가하고 실행해 결과를 확인한 뒤 다음 셀로 넘어간다.
-  - 함수를 모두 먼저 정의하고 나중에 실행하는 구조를 피한다. 한 scenario를 실제로 따라가며(training 생성 → 출력 확인 → 기준 RF → 확인 → CV …) 단계마다 shape·값을 출력한다. 반복 루프는 한 번 따라간 코드를 함수로 묶어 만든다.
+  - 함수를 모두 먼저 정의하고 나중에 실행하는 구조를 피한다. 한 scenario를 실제로 따라가며(training 생성 → 출력 확인 → 기준 RF → 확인 → σ̂² …) 단계마다 shape·값을 출력한다. 반복 루프는 한 번 따라간 코드를 함수로 묶어 만든다.
   - 딕셔너리 병합(`{**a, ...}`), 중첩 설정 딕셔너리, 함수형 한 줄 표현 대신 `if`/`else`와 평범한 변수를 쓴다. 저장용 메타데이터는 저장하는 단계에서 만든다.
   - 확인은 값을 출력해 눈으로 비교하게 하고, assert는 꼭 필요한 곳에만 짧게 쓴다. assert를 반복문에 몰아넣지 않는다.
 - 결과를 보고 coverage가 좋아지도록 seed·설정을 선택하거나 실패한 반복을 제외하지 않는다.
@@ -18,6 +18,7 @@ Python Jupyter Notebook `notebooks/MC_CP_simulation.ipynb`를 작성한다. 설�
 - 이번 산출물은 노트북과 실행에 필요한 간단한 의존성 목록이다. 구현 후 작은 smoke 실행으로 검증하고, 실행한 범위를 정확하게 보고한다.
 - **노트북은 구현·확인용이다.** 한 scenario(`linear_homo_gaussian`)를 따라가며 계산·저장 형식을 확인한다. 실제 full 실행은 노트북을 바탕으로 별도 `.py`로 만든다. scenario 일반화(`RUN_SCENARIOS`), r 단위 저장·재개, 따라가기 셀 제외, 4개 scenario smoke 실행, 버전 고정·백그라운드 실행 준비는 `.py`에서 한다. 노트북은 실행할 때마다 `results/smoke/<scenario>/`를 덮어쓴다.
 - (2026-10-12 현재) 실제 실행 파일은 루트의 `run_simulation.py`이며, 계산 코드를 고칠 때는 이 파일이 기준이다. `notebooks/simulation.ipynb`는 같은 계산의 노트북 버전(이해·결과표용)이므로 계산을 바꾸면 함께 맞춘다. `notebooks/MC_CP_simulation.ipynb`는 따라가기·검증용이며 결과는 `results/check/`에 저장한다. scenario와 mode는 명령줄이 아니라 파일 위쪽 `SCENARIOS`, `RUN_MODE`를 직접 고친다. 계산 코드를 바꾸면 `results/`를 지우고 처음부터 다시 돌린다(계산 버전 이름표는 쓰지 않는다).
+- (2026-10-15 설계 변경, 교수님 지침) OOB 튜닝과 CV를 없앴다. 하이퍼파라미터는 `linear_homo_gaussian`에서 24개 조합을 돌려 참평균을 가장 잘 따르는 조합을 한 번 고르고(그래프로 y=x 꼴 확인), 4개 scenario의 모든 RF에 고정한다. σ̂²는 기준 RF의 OOB 잔차 제곱평균이다(§2, §4).
 
 ## 2. 확정 설계와 구현 기본값
 
@@ -36,7 +37,7 @@ GRID_AXIS = [-1.0, -0.5, 0.0, 0.5, 1.0]
 ALPHAS = [0.10, 0.05]
 R = 200  # 구간 생성·평가 반복
 B = 200  # 각 r 안에서 생성하는 가상 training 데이터셋·재학습 모델 수
-VARIANCE_ESTIMATOR = 'cv'
+VARIANCE_ESTIMATOR = 'oob'
 MC_ERROR_FAMILY = 'gaussian'
 ```
 
@@ -48,7 +49,6 @@ Training과 calibration은 각각 1,000개이다. 하나의 1,000개 표본을 �
 
 ```python
 MASTER_SEED = 0
-CV_FOLDS = 10
 MC_QUANTILE_METHOD = 'linear'
 RF_FIXED_PARAMS = dict(
     n_estimators=1000,   # smoke에서는 30
@@ -57,39 +57,38 @@ RF_FIXED_PARAMS = dict(
     oob_score=True,
     n_jobs=-1,
 )
-RF_PARAM_GRID = {        # 24개 조합
+RF_PARAM_GRID = {        # 24개 조합 (하이퍼파라미터 선택 후보)
     'min_samples_leaf': [5, 10, 20, 40],
     'max_features': [0.5, 1.0],
     'max_samples': [0.5, 0.7, 1.0],
 }
 ```
 
-### RF Fit 절차 = OOB grid search + 학습
+### RF 하이퍼파라미터 = 한 번 선택 후 모든 RF에 고정 (2026-10-15 랩미팅, 교수님 지침)
 
-이 연구에서 RF의 `Fit(D)`는 **튜닝을 포함한 절차**이다. **기준 RF와 MC 재학습 RF**는 같은 Fit을 적용한다. CV fold RF는 튜닝하지 않고 기준 RF에서 선택한 조합을 고정해 학습한다(§4).
+이 연구에서 RF의 `Fit(D)`는 **고정 조합 `RF_PARAMS`로 RF 하나를 학습하는 절차**이다. 기준 RF와 MC 재학습 RF 모두 같은 Fit이며, MC에서 다시 튜닝하지 않는다. CV·OOB 튜닝은 쓰지 않는다.
 
-**확정된 방식 조합** (통계적 효율성과 계산 시간을 함께 고려해 사용자가 확정):
+| 단계 | 방식 |
+| --- | --- |
+| 하이퍼파라미터 선택 | `linear_homo_gaussian`에서 24개 조합 학습 → 새 X 1,000개에서 RMSE(f̂−m) 최소 조합 → m(x) 대 f̂(x) 그래프로 y=x 꼴 확인 |
+| 기준 RF·MC 재학습 RF | 선택한 `RF_PARAMS`로 고정, RF 하나만 학습 (4개 scenario 공통) |
+| σ̂² 추정 | 기준 RF의 OOB 잔차 제곱평균 (§4) |
 
-| 단계 | 방식 | 이유 |
-| --- | --- | --- |
-| 기준 RF 튜닝 | OOB | MC와 같은 절차여야 하고, 조합 순위 비교에는 OOB로 충분하다. |
-| σ̂² 추정 | CV (기준 RF 조합 고정, 10-fold) | 선택 편향이 작고 비용이 10회 학습뿐이며, `시뮬.md`의 CV 설계를 유지한다. |
-| MC 재학습 튜닝 | OOB | 기준 RF와 같은 절차. 5-fold CV 대비 약 5배 빠르다(전체 계산량의 대부분이 이 단계). |
+선택 절차 (scenario 루프 전에 한 번):
 
-- 기준 RF와 MC의 튜닝 방식은 반드시 같아야 한다. MC는 f̂를 만든 절차를 가상 데이터에 재현해 그 변동을 반영하므로, 한쪽만 바꾸지 않는다.
-- σ̂²를 기준 RF의 OOB MSE로 대체하지 않는다. 24개 중 최솟값을 고른 값이라 작게 치우친다.
+1. `linear_homo_gaussian`의 training(`common_dataset` 키)으로 `RF_PARAM_GRID`의 모든 조합에 대해 `RF_FIXED_PARAMS`와 합쳐 RF를 학습한다. 모든 후보는 `common_training` 키를 공유한다(조합마다 같은 키로 새 `RandomState` 객체).
+2. `make_random_state('linear_homo_gaussian', 'hparam_check')`로 새 X 1,000개를 뽑고(Y는 만들지 않음) RMSE `sqrt(mean((f̂(X) - m(X))**2))`를 계산한다.
+3. RMSE가 가장 작은 조합을 선택한다. 동률이면 grid 순서상 먼저 나온 조합을 선택한다. 후보를 하나씩 학습하면서 지금까지 가장 좋은 모델만 메모리에 유지한다.
+4. 선택한 조합의 m(x) 대 f̂(x) 산점도와 y=x 선을 그려 확인한다(`hparam_check.png`로 저장). 수치 통과 기준은 만들지 않는다.
+5. `linear_homo_gaussian`에서는 선택된 RF가 곧 기준 RF이다(같은 조합·같은 키라 재학습 없음). 다른 scenario는 각자의 training과 `common_training` 키로 `RF_PARAMS` RF 하나를 학습한다.
 
-1. `RF_PARAM_GRID`의 모든 조합에 대해 `RF_FIXED_PARAMS`와 합쳐 RF를 데이터 D 전체로 학습한다.
-2. 각 RF의 `oob_prediction_`으로 OOB MSE `mean((y - oob_prediction_)**2)`를 계산한다. sklearn `oob_score_`(R²)는 선택 기준으로 쓰지 않는다.
-3. OOB MSE가 가장 작은 조합을 선택한다. 동률이면 grid 순서상 먼저 나온 조합을 선택한다.
-4. 선택된 조합의 RF가 곧 최종 모델이다(OOB이므로 별도 재학습 없음). 탐색과 최종 모델의 트리 수는 같다.
-
-- OOB 예측이 없는 관측치가 생기면 오류를 낸다. 몰래 제외하지 않는다. sklearn은 이 경우 NaN을 주지 않고 예측값을 0으로 채운 뒤 `UserWarning("Some inputs do not have OOB scores...")`만 내므로, `warnings.filterwarnings('error', message='Some inputs do not have OOB scores')`로 이 경고를 오류로 바꾼다.
-- 후보 조합을 하나씩 학습하면서 지금까지 가장 좋은 모델만 메모리에 유지한다.
-- 자동 튜닝 외 추가 튜닝(조합 추가, 결과를 본 grid 변경)을 하지 않는다. grid를 바꾸면 사용자 승인 후 config에 기록한다.
-- 해석상 한계: MC 구간은 튜닝 선택의 변동까지 반영한다. OOB 표본 수는 `max_samples`에 따라 달라진다.
+- 선택은 실행 모드의 트리 수(`N_TREES`)로 매 실행 시작 때 한다. 어느 컴퓨터에서 어떤 `SCENARIOS`로 돌려도 키가 같아 같은 조합이 나온다. Smoke에서 고른 조합을 full 결과처럼 보고하지 않는다.
+- 선택 기준에 coverage나 calibration·평가 Y를 쓰지 않는다. 결과(coverage)를 보고 조합을 바꾸지 않는다.
+- grid를 바꾸면(조합 추가 등) 사용자 승인 후 config에 기록한다.
+- OOB 예측이 없는 관측치가 생기면 오류를 낸다(σ̂²가 OOB 예측을 쓰므로). 몰래 제외하지 않는다. sklearn은 이 경우 NaN을 주지 않고 예측값을 0으로 채운 뒤 `UserWarning("Some inputs do not have OOB scores...")`만 내므로, `warnings.filterwarnings('error', message='Some inputs do not have OOB scores')`로 이 경고를 오류로 바꾼다.
+- 해석상 한계: 조합을 고정하므로 MC 구간은 튜닝 선택의 변동을 반영하지 않는다. 조합은 `linear_homo_gaussian`에서 골랐으므로 다른 scenario에서는 최적이 아닐 수 있다.
 - `random_state`는 모델마다 재현 가능한 별도 seed를 사용한다(§9.3).
-- CV fold 수와 MC 분위수 방식을 결과 메타데이터에 저장한다.
+- 선택 결과(24개 조합 RMSE 표, `RF_PARAMS`)와 MC 분위수 방식을 결과 메타데이터에 저장한다.
 - Full 설정을 줄여 놓고 본 실험인 것처럼 보고하지 않는다. 별도 `RUN_MODE='smoke'/'full'`로 실행 규모를 구분한다.
 
 ## 3. DGP와 배열 계약
@@ -120,49 +119,47 @@ $$
 - NumPy의 `X[:, 0]`, `X[:, 1]`은 각각 설명변수 열이고, `X[i, :]`가 하나의 입력 벡터이다.
 - 별도의 random test 및 marginal 집계는 만들지 않는다.
 
-## 4. 기준 모델과 CV 잔차분산
+## 4. 기준 모델과 OOB 잔차분산
 
 각 scenario에서 다음을 한 번만 수행한다.
 
 1. True DGP로 training 생성.
-2. 전체 training으로 기준 RF `base_model`을 Fit(OOB 튜닝 + 학습, §2).
+2. 전체 training으로 기준 RF `base_model`을 고정 조합 `RF_PARAMS`로 학습(§2).
 3. `base_train_pred`와 `base_grid_pred` 계산.
-4. Training 내부 K-fold out-of-fold 예측으로 분산 추정.
+4. 기준 RF의 OOB 예측으로 분산 추정.
 5. `X_train`, `y_train`, `base_model`, `sigma2_hat`, `X_grid`를 모든 r에서 고정.
 
-관측값 j가 속한 fold를 k(j)라 할 때,
+관측값 j를, j가 부트스트랩 표본에 들어가지 않은 트리들로만 예측한 값 `oob_prediction_[j]`를 $\widehat f^{OOB}(X_j)$라 할 때,
 
 $$
-r_j^{CV}=Y_j^{train}-\widehat f^{(-k(j))}(X_j^{train}),\qquad
-\widehat\sigma^2=\frac1{n_{train}}\sum_{j=1}^{n_{train}}(r_j^{CV})^2.
+r_j^{OOB}=Y_j^{train}-\widehat f^{OOB}(X_j^{train}),\qquad
+\widehat\sigma^2=\frac1{n_{train}}\sum_{j=1}^{n_{train}}(r_j^{OOB})^2.
 $$
 
-- `KFold(shuffle=True, random_state=...)` 사용. 각 관측값은 자신이 제외된 fold 모델의 예측을 정확히 한 번 받는다.
-- 각 fold 모델 $\widehat f^{(-k)}$은 **튜닝하지 않는다.** 기준 RF에서 선택한 조합(`base_params`)을 고정하고, fold의 학습 데이터로 RF 하나만 학습한다(`random_state`는 `cv_model, fold=k`). fold마다 다시 튜닝하는 nested 방식은 쓰지 않는다.
-- 한계: `base_params`는 training 1000개 전체(검증 fold 포함)로 골랐으므로, 조합 선택을 통한 약한 정보 누출로 σ̂²가 아주 약간 작게 나올 수 있다. 조합이 24개뿐이라 영향은 작다고 본다.
-- 분산 추정은 OOF 잔차 전체의 **제곱평균**이다. `np.var(residuals)`나 fold별 RMSE의 평균을 제곱한 값으로 대체하지 않는다.
-- Calibration·grid 평가 반응값을 CV에 사용하지 않는다.
-- 기준 RF를 CV fold 모델로 덮어쓰지 않는다. 최종 기준 RF는 전체 training으로 학습한 모델이다.
-- CV는 r 루프 밖에서 한 번 수행한다. MC 가상 데이터마다 CV·분산 재추정을 하지 않는다.
+- 추가 학습이 없다. CV·KFold는 쓰지 않는다.
+- 조합을 OOB MSE가 아니라 RMSE(f̂−m)로 골랐으므로, OOB MSE 최솟값을 고를 때의 선택 편향은 없다.
+- 분산 추정은 OOB 잔차 전체의 **제곱평균**이다. `np.var(residuals)`로 대체하지 않는다. sklearn `oob_score_`(R²)를 쓰지 않는다.
+- Calibration·grid 평가 반응값을 분산 추정에 사용하지 않는다.
+- 분산 추정은 r 루프 밖에서 한 번 수행한다. MC 가상 데이터마다 분산을 재추정하지 않는다.
 - Gaussian 생성기의 `scale`에는 `sigma_hat = sqrt(sigma2_hat)`을 전달한다.
 - 잔차 제곱평균에는 평균함수 추정오차도 포함될 수 있다. 순수 오차분산의 불편추정량이라고 설명하지 않는다.
 - 비유한 추정값은 오류 처리한다. 0이면 퇴화 상태를 명시하고 작은 양수로 몰래 바꾸지 않는다.
-- 진단으로 `sigma2_hat`, pooled CV RMSE, grid의 true mean 대 fitted mean RMSE·MAE를 출력한다. 진단값으로 임의의 통과 기준을 만들지 않는다.
-- 진단으로 기준 RF의 OOB 잔차 제곱평균 `sigma2_oob`를 CV `sigma2_hat` 옆에 출력한다. `sigma2_oob`는 튜닝 선택 편향으로 작게 치우칠 수 있으므로 MC에는 사용하지 않는다(출력·config 기록만).
+- 진단으로 `sigma2_hat`, grid의 true mean 대 fitted mean RMSE·MAE를 출력한다. 진단값으로 임의의 통과 기준을 만들지 않는다.
 
 ## 5. 반복 구조 — 반드시 이 순서와 공유 범위를 유지
 
 ```text
+하이퍼파라미터 선택 (linear_homo_gaussian에서 한 번, §2) → RF_PARAMS 고정
 for scenario:
-    training 생성 및 기준 RF 학습
-    CV 잔차로 sigma2_hat 추정
+    training 생성 및 기준 RF 학습 (RF_PARAMS)
+    OOB 잔차로 sigma2_hat 추정
     grid와 기준 모델 예측값 준비
     for r in 1..R:
         true DGP에서 grid 반응값 25개 새로 생성
         true DGP에서 calibration X, Y 각 1000개 새로 생성
         for b in 1..B:
             원래 training X에서 가상 Y* 1000개 생성
-            새로운 RF를 가상 training으로 학습
+            새로운 RF를 가상 training으로 학습 (RF_PARAMS, 튜닝 없음)
             모든 grid 25개를 한 번에 예측
             예측값 각각에 독립적인 새 Gaussian 오차 추가
         동일한 B×25 MC 표본에서 두 alpha의 구간 생성
@@ -172,7 +169,7 @@ for scenario:
     입력 벡터·alpha·방법별 집계 및 파일 저장
 ```
 
-고정 대상: 원래 training, 기준 RF, 추정분산, grid X.
+고정 대상: RF 하이퍼파라미터 `RF_PARAMS`, 원래 training, 기준 RF, 추정분산, grid X.
 재생성 대상: calibration X·Y, grid Y, MC 가상 training Y, MC 재학습 모델, MC 새 관측오차.
 
 평가용 grid Y는 매 r마다 입력별 하나를 생성한다. MC·CP와 두 alpha가 같은 값을 공유한다. 학습 Y, calibration Y, MC 가상 Y를 평가 Y로 재사용하지 않는다.
@@ -197,7 +194,7 @@ $$
 - 가상 training 오차와 새 관측오차는 별도 독립 난수이다. 모든 i, r, b에서 필요한 새 오차를 생성한다.
 - Student-t scenario에서도 MC 가상 오차는 Gaussian이다. True DGP 오차와 혼동하여 Student-t로 자동 변경하지 않는다.
 - 매 b에 **RF 전체를 하나 학습**한다. RF 안의 개별 트리 예측을 B개 모델 예측으로 대체하지 않는다.
-- 매 (r,b)의 RF도 같은 Fit을 적용한다. 가상 training $D^{*(r,b)}$로 OOB 튜닝을 다시 하고, 기준 RF에서 고른 조합을 재사용하지 않는다.
+- 매 (r,b)의 RF도 같은 Fit을 적용한다. 고정 조합 `RF_PARAMS`로 RF 하나만 학습하고, 가상 training $D^{*(r,b)}$로 다시 튜닝하지 않는다.
 - B는 가상 데이터셋 수이며 training 크기 1000이나 RF 트리 수와 다르다.
 - 같은 B개 모델을 25개 입력과 두 alpha에 공유한다. 입력별·alpha별로 다시 학습하지 않는다.
 - 기준 예측값에 오차만 더하는 방식으로 MC 재학습을 생략하지 않는다.
@@ -273,23 +270,22 @@ $$
 ```
 
 - `scenario_id`는 아래 고정 매핑을 사용한다. 실행 목록을 재정렬하거나 일부 DGP만 실행해도 ID를 바꾸지 않는다.
-- `r=1,...,R`, `b=1,...,B`, `fold=1,...,CV_FOLDS`로 사용한다. 해당 단계에 필요 없는 인덱스는 0으로 둔다.
+- `r=1,...,R`, `b=1,...,B`로 사용한다. 해당 단계에 필요 없는 인덱스는 0으로 둔다. `fold`는 현재 쓰는 단계가 없어 항상 0이다(키 형식은 유지).
 - 아래 숫자는 원시 seed의 연속 범위가 아니라 **단계 식별자**이다. 수만 개 seed를 수동 목록으로 관리하지 않는다.
 - `common`은 한 DGP 안에서 MC·CP가 기준 training과 fitted model을 공유한다는 뜻이다. 기본 구현에서는 DGP별 난수 흐름을 scenario ID로 구분한다.
 
 | 단계 이름 | stage_id | 사용하는 인덱스 | DGP당 흐름 수 | 용도 |
 | --- | ---: | --- | ---: | --- |
 | `common_dataset` | 0 | 없음 | 1 | 원래 training X와 오차를 순서대로 생성 |
-| `common_training` | 1 | 없음 | 1 | 기준 RF 학습 |
-| `cv_split` | 2 | 없음 | 1 | CV fold 분할 |
-| `cv_model` | 3 | fold | CV_FOLDS | 각 fold의 RF 학습 |
+| `common_training` | 1 | 없음 | 1 | 기준 RF 학습 (하이퍼파라미터 선택 후보 24개 포함) |
 | `cp_calibration` | 4 | r | R=200 | True DGP에서 calibration X·Y 생성 |
 | `mc_dataset` | 5 | r, b | R×B=40,000 | 고정 training X에서 가상 training 오차 생성 |
 | `mc_training` | 6 | r, b | R×B=40,000 | 가상 training으로 RF 재학습 |
 | `mc_new_error` | 7 | r, b | R×B=40,000 | MC grid 예측에 추가할 Gaussian 오차 생성 |
 | `test_error` | 8 | r | R=200 | True DGP에서 실제 평가용 grid 오차 생성 |
+| `hparam_check` | 9 | 없음 | 1 (`linear_homo_gaussian`만) | 하이퍼파라미터 선택용 새 X 1,000개 생성 |
 
-CP는 별도 모델을 학습하지 않으므로 `cp_training` 대신 `cp_calibration`이라는 이름을 사용한다. CV를 다른 분산 추정법으로 교체하면 사용하지 않는 CV 단계 ID는 그대로 예약해 두며, 다른 단계 번호를 당기지 않는다.
+CP는 별도 모델을 학습하지 않으므로 `cp_training` 대신 `cp_calibration`이라는 이름을 사용한다. 2026-10-15에 CV를 없애면서 `cv_split`(2)·`cv_model`(3)을 삭제했다. 남은 단계 번호는 당기지 않는다.
 
 ### 9.2 구현 예시
 
@@ -304,9 +300,10 @@ SCENARIO_IDS = {
 }
 STAGE_IDS = {
     'common_dataset': 0, 'common_training': 1,
-    'cv_split': 2, 'cv_model': 3, 'cp_calibration': 4,
+    'cp_calibration': 4,
     'mc_dataset': 5, 'mc_training': 6,
     'mc_new_error': 7, 'test_error': 8,
+    'hparam_check': 9,
 }
 
 def make_random_state(scenario, stage, r=0, b=0, fold=0):
@@ -316,16 +313,16 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
     return np.random.RandomState(words)
 ```
 
-- **생성기는 `make_random_state` 하나로 통일한다.** 데이터·오차 생성(`uniform`, `normal`, `standard_t`)과 RF·`KFold`의 `random_state` 모두에 사용한다. `Generator`(`make_rng`)는 쓰지 않는다.
+- **생성기는 `make_random_state` 하나로 통일한다.** 데이터·오차 생성(`uniform`, `normal`, `standard_t`)과 RF의 `random_state` 모두에 사용한다. `Generator`(`make_rng`)는 쓰지 않는다.
 - 통일 이유: 단계마다 생성기 종류를 구분할 필요가 없어 읽기 쉽고, `RandomState`는 NumPy 버전이 달라도 같은 난수를 내도록 보장되어 여러 컴퓨터에서 나눠 실행할 때 안전하다. 시드 재료는 128비트(정수 4개)라 키 간 시드 충돌 걱정이 없다.
 - 같은 `RandomState` 객체를 여러 모델에서 재사용하지 않는다. 각 키에서 새 객체를 만든다.
-- OOB 튜닝의 후보 조합들은 해당 단계의 같은 키를 공유한다(기준 RF는 `common_training`, MC는 `mc_training, r, b`. fold RF는 튜닝 없이 `cv_model, fold=k`로 RF 하나만 학습). 조합마다 같은 키로 새 `RandomState` 객체를 만들어 전달한다. 튜닝 때문에 stage를 추가하지 않는다.
+- 하이퍼파라미터 선택의 후보 조합 24개는 `linear_homo_gaussian`의 `common_training` 키를 공유한다. 조합마다 같은 키로 새 `RandomState` 객체를 만들어 전달한다. MC RF는 `mc_training, r, b`로 고정 조합 RF 하나만 학습한다.
 
 ### 9.3 난수 사용과 공유 규칙
 
 - 원래 training은 `make_random_state(scenario, 'common_dataset')` 하나를 만들고, 그 생성기에서 X와 오차를 차례로 뽑는다. X와 오차를 뽑기 전에 같은 키로 각각 재초기화하지 않는다.
 - 기준 RF는 `make_random_state(scenario, 'common_training')`을 사용한다.
-- CV 분할은 `make_random_state(scenario, 'cv_split')`, 각 fold RF는 `make_random_state(scenario, 'cv_model', fold=k)`를 사용한다. Fold별 random_state를 지정할 수 있도록 명시적 fold 루프를 사용한다.
+- 하이퍼파라미터 선택용 X는 `make_random_state('linear_homo_gaussian', 'hparam_check')`에서 `uniform(-1, 1, size=(1000, 2))`로 뽑는다. 이 X는 선택에만 쓰고 시뮬레이션 계산에는 쓰지 않는다.
 - 매 r의 calibration은 `make_random_state(scenario, 'cp_calibration', r=r)`에서 X와 오차를 순서대로 생성한다.
 - 매 (r,b)의 가상 training 오차는 `make_random_state(scenario, 'mc_dataset', r=r, b=b)`에서 길이 N_TRAIN으로 뽑는다. Training X는 재생성하지 않는다.
 - 매 (r,b)의 RF는 `make_random_state(scenario, 'mc_training', r=r, b=b)`로 새로 학습한다.
@@ -344,7 +341,7 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 
 - MC 표본을 전부 저장하지 않는다. 각 r에서 B×25 배열만 유지하고 개별 RF는 예측 후 해제한다.
 - 기본은 바깥 루프 순차 실행과 RF 내부 병렬화이다. 바깥 병렬화를 사용하면 RF 내부 `n_jobs=1`로 중첩 병렬화를 피한다.
-- Full MC 선택 모델은 DGP당 B×R=40,000개이고, OOB 튜닝 때문에 후보 RF 학습은 DGP당 40,000×24=960,000회이다. 기준 RF 후보 24회와 CV fold RF CV_FOLDS=10회가 별도 추가된다.
+- Full MC RF 학습은 DGP당 B×R=40,000회이다(튜닝 없음). 하이퍼파라미터 선택 24회(실행마다 한 번)와 다른 scenario의 기준 RF 1회가 별도 추가된다.
 - 길이 추가는 모델 학습 횟수나 결과 행 수를 증가시키지 않는다.
 - **Scenario별로 서로 다른 컴퓨터에서 실행한다.** 노트북 설정의 `RUN_SCENARIOS`로 이번 컴퓨터가 실행할 scenario를 고른다. `SCENARIO_IDS`는 바꾸지 않으므로 어느 컴퓨터에서 실행해도 난수 키는 같다.
 - 모든 컴퓨터는 고정된 `requirements.txt`(`pip freeze` 결과)로 같은 라이브러리 버전을 사용하고, `config.json`에 버전과 컴퓨터 정보를 기록한다.
@@ -357,8 +354,8 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 
 | 파일 | 필수 내용 |
 | --- | --- |
-| `config.json` | 설계 버전, 실행 모드, 확정값/구현 기본값 구분, seed·stage 매핑, R·B·n_train·n_cal·grid·alpha, RF 고정 설정·탐색 grid·선택 규칙(OOB MSE, 동률 시 grid 순서), 기준 RF 튜닝표(조합별 OOB MSE), 확정 방식 조합(튜닝 OOB / σ̂² CV 조합 고정 / MC 튜닝 OOB), CV folds, CV에 고정한 base_params, sigma2_hat, 진단용 sigma2_oob, MC 분위수 방식, 라이브러리 버전, 컴퓨터 정보, 완료 r 목록 |
-| `model_selection.csv` | scenario, stage(`base`/`mc`), r, b, min_samples_leaf, max_features, max_samples, oob_mse — 튜닝으로 선택된 조합만 기록 (full DGP당 40,001행). CV fold RF는 `base_params`를 그대로 쓰므로 기록하지 않는다. |
+| `config.json` | 설계 버전, 실행 모드, 확정값/구현 기본값 구분, seed·stage 매핑, R·B·n_train·n_cal·grid·alpha, RF 고정 설정·탐색 grid, 하이퍼파라미터 선택(선택 scenario, 선택용 X, 규칙: RMSE(f̂−m) 최소·동률 시 grid 순서, 24개 조합 RMSE 표, 선택 조합 `RF_PARAMS`, 적용 범위), variance_estimator(`oob`), sigma2_hat, 진단값, MC 분위수 방식, 라이브러리 버전, 컴퓨터 정보, 완료 r 목록 |
+| `hparam_check.png` | 선택 조합의 m(x) 대 f̂(x) 산점도와 y=x 선 (`linear_homo_gaussian`, 선택용 X 1,000개) |
 | `test_grid.csv` | scenario, grid_id, x1, x2, true_mean, base_prediction |
 | `interval_metrics.csv` | scenario, r, grid_id, x1, x2, alpha, method, y_true, true_mean, lower, upper, covered, length |
 | `point_summary.csv` | scenario, grid_id, x1, x2, alpha, method, n_covered, n_evaluated, coverage, length_mean |
@@ -378,7 +375,7 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 1. 연구 목적, 평가 대상과 반복 구조 설명
 2. Imports, 실행 환경, 설정 셀과 smoke/full 선택
 3. DGP 및 grid 생성 함수
-4. RF 생성·CV 잔차분산 함수
+4. 하이퍼파라미터 선택(grid search·그래프 확인)·RF 생성·OOB 잔차분산
 5. MC 구간·CP 순위 분위수 함수
 6. 한 scenario 실행 함수와 r 루프
 7. 결과 저장·집계 함수
@@ -393,15 +390,15 @@ def make_random_state(scenario, stage, r=0, b=0, fold=0):
 
 - 알려진 score 배열로 CP의 순위 선택과 k>n_cal 경계를 확인한다.
 - 작은 수치 배열로 MC 분위수 축이 B 축인지 확인한다.
-- OOF 예측에서 각 관측값의 학습 제외와 한 번의 예측을 확인한다.
-- 작은 실행에서 MC 선택 모델이 정확히 R×B개, MC 후보 학습이 R×B×조합 수인지 확인한다. 기준 RF·CV 호출과 구분한다.
-- 작은 예제에서 OOB 선택 규칙(최소 OOB MSE, 동률 시 grid 순서)과 OOB 예측 누락 시 오류 처리(트리 수가 매우 적은 RF로 경고→오류 확인)를 확인한다.
+- 선택된 조합이 24개 조합 표에서 RMSE(f̂−m)가 가장 작은 행인지(동률 시 grid 순서), 기준 RF가 그 조합으로 학습됐는지 확인한다.
+- MC RF가 고정 조합 `RF_PARAMS`로 학습되는지 확인한다(예: 특정 (r,b)를 `RF_PARAMS`로 다시 학습해 MC 표본 행이 재현되는지). MC RF 학습이 R×B회이고 튜닝이 없음을 하이퍼파라미터 선택 24회와 구분해 보고한다.
+- OOB 예측 누락 시 오류 처리(트리 수가 매우 적은 RF로 경고→오류 확인)를 확인한다.
 - 각 r에서 calibration과 평가 Y를 재생성하며, 두 방법·두 alpha에 동일한 평가 Y가 대응하는지 확인한다.
 - 원시 결과의 행 수·key 유일성·길이=상한−하한·집계 count를 확인한다.
 - 같은 r, alpha에서 CP 길이가 grid 전체에 동일한지 확인한다.
 - 동일 표본으로 계산한 95% 구간이 90% 구간을 포함하는지 확인한다.
 - 동일 seed와 설정의 작은 재실행에서 결과가 재현되는지 확인한다.
-- 난수 키의 단계·r·b·fold 배정이 맞는지 확인하고, 작은 예제에서 특정 키를 실행 순서와 무관하게 다시 생성할 수 있는지 확인한다.
+- 난수 키의 단계·r·b 배정이 맞는지 확인하고, 작은 예제에서 특정 키를 실행 순서와 무관하게 다시 생성할 수 있는지 확인한다.
 - MC 새 관측오차와 실제 test 오차의 단계가 구분되고, 같은 r의 test Y가 두 방법·두 alpha에 공유되는지 확인한다.
 - Student-t(df=3)는 두꺼운 꼬리이므로 작은 표본분산이 1과 매우 가깝다는 것을 필수 assertion으로 삼지 않는다.
 - 관측 coverage가 정확히 0.90/0.95이거나 CP≥MC여야 한다는 검증을 넣지 않는다.
